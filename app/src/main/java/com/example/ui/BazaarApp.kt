@@ -2947,6 +2947,13 @@ fun CartScreen(
         }
     }
 
+    LaunchedEffect(viewModel) {
+        viewModel.checkoutSuccessEvent.collect {
+            cartCheckoutStep = 3
+            showCartCheckoutDialog = true
+        }
+    }
+
     // Compute prices
     val computedItems = cartList.mapNotNull { cartItem ->
         val product = allProducts.find { it.id == cartItem.productId }
@@ -2982,9 +2989,22 @@ fun CartScreen(
         activity?.razorpayResult?.collect { result ->
             when (result) {
                 is com.example.RazorpayResult.Success -> {
-                    currentPerformCheckout.value.invoke()
-                    cartCheckoutStep = 3
-                    showCartCheckoutDialog = true
+                    val pending = viewModel.pendingCheckout.value
+                    if (pending != null) {
+                        viewModel.checkout(
+                            totalAmount = pending.totalAmount,
+                            summary = pending.summary,
+                            customOrderId = pending.orderId,
+                            deliveryAddress = pending.address,
+                            couponApplied = pending.coupon
+                        )
+                        viewModel.notifyCheckoutSuccess()
+                        viewModel.clearPendingCheckout()
+                    } else {
+                        currentPerformCheckout.value.invoke()
+                        cartCheckoutStep = 3
+                        showCartCheckoutDialog = true
+                    }
                 }
                 is com.example.RazorpayResult.Error -> {
                     val msg = if (result.code == 0 || result.description.contains("cancel", ignoreCase = true)) {
@@ -3305,6 +3325,16 @@ fun CartScreen(
                                     val act = activity ?: (context as? Activity)
                                     if (act != null) {
                                         val summary = computedItems.joinToString(", ") { "${it.second.name} x${it.first.quantity}" }
+                                        // Set pending checkout info so Razorpay callback can retrieve it on success
+                                        viewModel.setPendingCheckout(
+                                            com.example.viewmodel.PendingCheckout(
+                                                totalAmount = cartFinalTotal,
+                                                summary = summary,
+                                                orderId = generatedCartOrderId,
+                                                address = cartTempAddress,
+                                                coupon = if (cartIsCouponApplied) cartCouponText else ""
+                                            )
+                                        )
                                         try {
                                             Checkout.preload(act.applicationContext)
                                             val checkout = Checkout()
@@ -4866,6 +4896,7 @@ fun ProductDetailPane(
     viewModel: BazaarViewModel
 ) {
     val context = LocalContext.current
+    val activity = context as? MainActivity
     var isFaved = viewModel.isWishlisted(product.id)
     val user by viewModel.currentUser.collectAsState()
     val allUsers by viewModel.allUsers.collectAsState()
@@ -4919,6 +4950,13 @@ fun ProductDetailPane(
         }
         if (tempCard.isEmpty() && !user?.savedCards.isNullOrEmpty()) {
             tempCard = user!!.savedCards
+        }
+    }
+
+    LaunchedEffect(viewModel) {
+        viewModel.checkoutSuccessEvent.collect {
+            checkoutStep = 3
+            showCheckoutDialog = true
         }
     }
 
@@ -5722,20 +5760,6 @@ fun ProductDetailPane(
                                 }
                             }
 
-                            Spacer(modifier = Modifier.height(10.dp))
-
-                            OutlinedTextField(
-                                value = tempCard,
-                                onValueChange = { tempCard = it },
-                                label = { Text("Secure Card details") },
-                                placeholder = { Text("1234-5678-9012-3456") },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("checkout_card_input"),
-                                singleLine = true,
-                                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = DarkGreenPrimary)
-                            )
-
                             Spacer(modifier = Modifier.height(14.dp))
 
                             // Order billing summary
@@ -5765,21 +5789,51 @@ fun ProductDetailPane(
                             Spacer(modifier = Modifier.height(16.dp))
                             Button(
                                 onClick = {
-                                    if (tempCard.isNotBlank()) {
-                                        viewModel.updateCards(tempCard)
-                                        // Finalize Order Placement
-                                        val itemsSummary = "${product.name} x1"
-                                        viewModel.checkout(finalTotalAmount, itemsSummary, directOrderId)
-                                        checkoutStep = 3
+                                    val act = activity ?: (context as? Activity)
+                                    if (act != null) {
+                                        val summary = "${product.name} x1"
+                                        // Set pending checkout info so Razorpay callback can retrieve it on success
+                                        viewModel.setPendingCheckout(
+                                            com.example.viewmodel.PendingCheckout(
+                                                totalAmount = finalTotalAmount,
+                                                summary = summary,
+                                                orderId = directOrderId,
+                                                address = tempAddress,
+                                                coupon = if (isCouponApplied) couponText else ""
+                                            )
+                                        )
+                                        try {
+                                            Checkout.preload(act.applicationContext)
+                                            val checkout = Checkout()
+                                            checkout.setKeyID(BuildConfig.RAZORPAY_KEY_ID)
+                                            val options = JSONObject().apply {
+                                                put("name", "ZYL VOR BAZAAR")
+                                                put("description", summary.take(255))
+                                                put("currency", "INR")
+                                                put("amount", (finalTotalAmount * 100).toInt())
+                                                put("prefill", JSONObject().apply {
+                                                    put("email", user?.email ?: "")
+                                                    put("contact", "")
+                                                })
+                                                put("theme", JSONObject().apply {
+                                                    put("color", "#1B5E20")
+                                                })
+                                            }
+                                            checkout.open(act, options)
+                                        } catch (e: Exception) {
+                                            Toast.makeText(context, "Could not open payment: ${e.message}", Toast.LENGTH_LONG).show()
+                                        }
                                     } else {
-                                        Toast.makeText(context, "Card details cannot be empty", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, "Payment unavailable", Toast.LENGTH_SHORT).show()
                                     }
                                 },
                                 modifier = Modifier.fillMaxWidth(),
                                 colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary),
                                 shape = RoundedCornerShape(10.dp)
                             ) {
-                                Text("Pay Securely ₹${String.format("%.2f", finalTotalAmount)}", color = CustomWhite)
+                                Icon(imageVector = Icons.Default.Lock, contentDescription = null, tint = CustomWhite, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Pay Securely ₹${String.format("%.2f", finalTotalAmount)}", color = CustomWhite, fontWeight = FontWeight.Bold)
                             }
                         }
                         3 -> {
@@ -6099,19 +6153,19 @@ fun SellerPanelScreen(
                         emptyList()
                     }
                     val pendingCount = sellerOrders.count { 
-                        it.status == "Processing" || it.status == "Pending" || it.status.isBlank() || it.status == "Accepted" 
+                        it.status == "Processing" || it.status == "Pending" || it.status.isBlank() || it.status == "Accepted" || it.status == "Seller Reject Requested"
                     }
                     val readyCount = sellerOrders.count { 
-                        it.status == "Shipped" || it.status == "Ready to Deliver" || it.status == "Shipping Ready" || it.status == "On the Way" || it.status == "Delivery Take More Time" 
+                        it.status == "Shipped" || it.status == "Ready to Deliver" || it.status == "Shipping Ready" || it.status == "On the Way" || it.status == "Delivery Take More Time" || it.status == "Ready for Delivery" || it.status == "Delivery Accepted"
                     }
                     val successCount = sellerOrders.count { it.status == "Delivered" }
                     val cancelledCount = sellerOrders.count { it.status == "Cancelled" }
                     val filteredOrders = when (selectedStatusFilter) {
                         "Pending" -> sellerOrders.filter { 
-                            it.status == "Processing" || it.status == "Pending" || it.status.isBlank() || it.status == "Accepted" 
+                            it.status == "Processing" || it.status == "Pending" || it.status.isBlank() || it.status == "Accepted" || it.status == "Seller Reject Requested"
                         }
                         "Ready to Deliver" -> sellerOrders.filter { 
-                            it.status == "Shipped" || it.status == "Ready to Deliver" || it.status == "Shipping Ready" || it.status == "On the Way" || it.status == "Delivery Take More Time" 
+                            it.status == "Shipped" || it.status == "Ready to Deliver" || it.status == "Shipping Ready" || it.status == "On the Way" || it.status == "Delivery Take More Time" || it.status == "Ready for Delivery" || it.status == "Delivery Accepted"
                         }
                         "Delivered" -> sellerOrders.filter { it.status == "Delivered" }
                         "Cancelled" -> sellerOrders.filter { it.status == "Cancelled" }

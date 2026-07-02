@@ -200,6 +200,14 @@ fun Map<String, Any?>.toOrder(): Order {
     )
 }
 
+data class PendingCheckout(
+    val totalAmount: Double,
+    val summary: String,
+    val orderId: String,
+    val address: String,
+    val coupon: String
+)
+
 sealed class AuthState {
     object Idle : AuthState()
     object Loading : AuthState()
@@ -210,6 +218,27 @@ sealed class AuthState {
 class BazaarViewModel(application: Application) : AndroidViewModel(application) {
     private val database = AppDatabase.getDatabase(application)
     private val repository = AppRepository(database.appDao())
+
+    // --- State: Pending Checkout & Success Event ---
+    private val _pendingCheckout = MutableStateFlow<PendingCheckout?>(null)
+    val pendingCheckout: StateFlow<PendingCheckout?> = _pendingCheckout.asStateFlow()
+
+    private val _checkoutSuccessEvent = MutableSharedFlow<Boolean>(extraBufferCapacity = 1)
+    val checkoutSuccessEvent: SharedFlow<Boolean> = _checkoutSuccessEvent.asSharedFlow()
+
+    fun setPendingCheckout(info: PendingCheckout) {
+        _pendingCheckout.value = info
+    }
+
+    fun clearPendingCheckout() {
+        _pendingCheckout.value = null
+    }
+
+    fun notifyCheckoutSuccess() {
+        viewModelScope.launch {
+            _checkoutSuccessEvent.emit(true)
+        }
+    }
 
     // --- State: Auth ---
     private val _authState = MutableStateFlow<AuthState>(AuthState.Idle)
@@ -392,13 +421,26 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    private var lastSyncedEmail: String? = null
+
     private fun observeCartAndWishlist() {
         viewModelScope.launch {
             _currentUser.collectLatest { user ->
                 if (user != null) {
-                    // Sync Cart from Firestore to Room local cache once on login/restore
-                    repository.syncCartFromFirestore(user.email)
-                    
+                    if (lastSyncedEmail != user.email) {
+                        lastSyncedEmail = user.email
+                        repository.syncCartFromFirestore(user.email)
+                        repository.syncWishlistFromFirestore(user.email)
+                    }
+                } else {
+                    lastSyncedEmail = null
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            _currentUser.collectLatest { user ->
+                if (user != null) {
                     // Collect cart locally from Room DB
                     repository.getCartItems(user.email).collectLatest { cart ->
                         _currentCart.value = cart
@@ -412,9 +454,6 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             _currentUser.collectLatest { user ->
                 if (user != null) {
-                    // Sync Wishlist from Firestore to Room local cache once on login/restore
-                    repository.syncWishlistFromFirestore(user.email)
-                    
                     // Collect wishlist locally from Room DB
                     repository.getWishlistItems(user.email).collectLatest { wish ->
                         _currentWishlist.value = wish
