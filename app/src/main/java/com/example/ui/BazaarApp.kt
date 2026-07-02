@@ -111,12 +111,21 @@ fun BazaarApp(activity: MainActivity? = null, viewModel: BazaarViewModel = viewM
     // Screen navigation flow
     LaunchedEffect(splashCompleted) {
         if (splashCompleted) {
-            currentScreen = Screen.Login
+            if (authState is AuthState.Success) {
+                val user = (authState as AuthState.Success).user
+                currentScreen = when (user.role) {
+                    "Seller" -> Screen.Seller
+                    "DeliveryPartner" -> Screen.DeliveryPartner
+                    else -> Screen.Main
+                }
+            } else {
+                currentScreen = Screen.Login
+            }
         }
     }
 
     LaunchedEffect(authState) {
-        if (authState is AuthState.Success) {
+        if (authState is AuthState.Success && splashCompleted) {
             val user = (authState as AuthState.Success).user
             currentScreen = when (user.role) {
                 "Seller" -> Screen.Seller
@@ -323,6 +332,7 @@ fun LoginScreen(
     LaunchedEffect(authState) {
         if (authState is AuthState.Error) {
             Toast.makeText(context, (authState as AuthState.Error).message, Toast.LENGTH_LONG).show()
+            viewModel.resetAuthState()
         }
     }
 
@@ -578,6 +588,7 @@ fun RegisterScreen(
     LaunchedEffect(authState) {
         if (authState is AuthState.Error) {
             Toast.makeText(context, (authState as AuthState.Error).message, Toast.LENGTH_LONG).show()
+            viewModel.resetAuthState()
         }
     }
 

@@ -11,6 +11,7 @@ import com.google.android.gms.tasks.Task
 import kotlin.coroutines.suspendCoroutine
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.suspendCancellableCoroutine
 
 // --- Entity: User ---
 @Entity(tableName = "users")
@@ -206,6 +207,9 @@ interface AppDao {
     @Query("DELETE FROM wishlist_items WHERE email = :email AND productId = :prodId")
     suspend fun deleteWishlistItem(email: String, prodId: Int)
 
+    @Query("DELETE FROM wishlist_items WHERE email = :email")
+    suspend fun clearWishlist(email: String)
+
     // Order Queries
     @Query("SELECT * FROM orders WHERE email = :email ORDER BY orderDate DESC")
     fun getOrders(email: String): Flow<List<Order>>
@@ -253,8 +257,9 @@ abstract class AppDatabase : RoomDatabase() {
 }
 
 // --- Helper Extension for Tasks ---
-suspend fun <T> Task<T>.awaitTask(): T = suspendCoroutine { cont ->
+suspend fun <T> Task<T>.awaitTask(): T = suspendCancellableCoroutine { cont ->
     addOnCompleteListener { task ->
+        if (!cont.isActive) return@addOnCompleteListener
         if (task.isSuccessful) {
             cont.resume(task.result)
         } else {
@@ -458,14 +463,36 @@ class AppRepository(private val appDao: AppDao) {
     // Repository Operations directly pointing to Firestore
 
     suspend fun getUser(email: String): User? {
-        return try {
-            val doc = FirebaseFirestore.getInstance()
-                .collection("users")
-                .document(email)
-                .get()
-                .awaitTask()
-            if (doc.exists()) mapToUser(doc.data ?: emptyMap()) else null
+        // 1. Try to fetch remotely first under a 3-second timeout
+        val remoteUser = try {
+            kotlinx.coroutines.withTimeoutOrNull(3000L) {
+                val doc = FirebaseFirestore.getInstance()
+                    .collection("users")
+                    .document(email)
+                    .get()
+                    .awaitTask()
+                if (doc.exists()) mapToUser(doc.data ?: emptyMap()) else null
+            }
         } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+
+        if (remoteUser != null) {
+            // Cache locally
+            try {
+                appDao.insertUser(remoteUser)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            return remoteUser
+        }
+
+        // 2. Fall back to local database
+        return try {
+            appDao.getUser(email)
+        } catch (e: Exception) {
+            e.printStackTrace()
             null
         }
     }
@@ -489,12 +516,22 @@ class AppRepository(private val appDao: AppDao) {
     }
 
     suspend fun insertUser(user: User) {
+        // 1. Write locally first to ensure offline-first works instantly
         try {
-            FirebaseFirestore.getInstance()
-                .collection("users")
-                .document(user.email)
-                .set(userToMap(user))
-                .awaitTask()
+            appDao.insertUser(user)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        // 2. Write to Firebase Firestore in the background with a 3-second timeout
+        try {
+            kotlinx.coroutines.withTimeoutOrNull(3000L) {
+                FirebaseFirestore.getInstance()
+                    .collection("users")
+                    .document(user.email)
+                    .set(userToMap(user))
+                    .awaitTask()
+            }
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -558,48 +595,59 @@ class AppRepository(private val appDao: AppDao) {
         }
     }
 
-    fun getCartItems(email: String): Flow<List<CartItem>> = callbackFlow {
-        val listener = FirebaseFirestore.getInstance()
-            .collection("cart_items")
-            .whereEqualTo("email", email)
-            .addSnapshotListener { snapshot, error ->
-                if (error != null) {
-                    close(error)
-                    return@addSnapshotListener
-                }
-                if (snapshot != null) {
-                    val list = snapshot.documents.mapNotNull { doc ->
-                        doc.data?.let { mapToCartItem(it) }
-                    }
-                    trySend(list)
-                }
+    fun getCartItems(email: String): Flow<List<CartItem>> = appDao.getCartItems(email)
+
+    suspend fun syncCartFromFirestore(email: String) {
+        try {
+            val snapshot = kotlinx.coroutines.withTimeoutOrNull(4000L) {
+                FirebaseFirestore.getInstance()
+                    .collection("cart_items")
+                    .whereEqualTo("email", email)
+                    .get()
+                    .awaitTask()
             }
-        awaitClose { listener.remove() }
+            if (snapshot != null) {
+                val items = snapshot.documents.mapNotNull { doc ->
+                    doc.data?.let { mapToCartItem(it) }
+                }
+                appDao.clearCart(email)
+                items.forEach { appDao.insertCartItem(it) }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     suspend fun insertCartItem(item: CartItem) {
         try {
-            val db = FirebaseFirestore.getInstance()
-            val existing = db.collection("cart_items")
-                .whereEqualTo("email", item.email)
-                .whereEqualTo("productId", item.productId)
-                .get()
-                .awaitTask()
+            appDao.insertCartItem(item)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        try {
+            kotlinx.coroutines.withTimeoutOrNull(3000L) {
+                val db = FirebaseFirestore.getInstance()
+                val existing = db.collection("cart_items")
+                    .whereEqualTo("email", item.email)
+                    .whereEqualTo("productId", item.productId)
+                    .get()
+                    .awaitTask()
 
-            if (!existing.isEmpty) {
-                val docId = existing.documents.first().id
-                val currentQty = (existing.documents.first().data?.get("quantity") as? Number)?.toInt() ?: 1
-                db.collection("cart_items")
-                    .document(docId)
-                    .update("quantity", currentQty + item.quantity)
-                    .awaitTask()
-            } else {
-                val finalId = if (item.id == 0) (Math.random() * 10000000).toInt() else item.id
-                val finalItem = item.copy(id = finalId)
-                db.collection("cart_items")
-                    .document(finalId.toString())
-                    .set(cartItemToMap(finalItem))
-                    .awaitTask()
+                if (!existing.isEmpty) {
+                    val docId = existing.documents.first().id
+                    val currentQty = (existing.documents.first().data?.get("quantity") as? Number)?.toInt() ?: 1
+                    db.collection("cart_items")
+                        .document(docId)
+                        .update("quantity", currentQty + item.quantity)
+                        .awaitTask()
+                } else {
+                    val finalId = if (item.id == 0) (Math.random() * 10000000).toInt() else item.id
+                    val finalItem = item.copy(id = finalId)
+                    db.collection("cart_items")
+                        .document(finalId.toString())
+                        .set(cartItemToMap(finalItem))
+                        .awaitTask()
+                }
             }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -608,11 +656,18 @@ class AppRepository(private val appDao: AppDao) {
 
     suspend fun updateCartQuantity(itemId: Int, qty: Int) {
         try {
-            FirebaseFirestore.getInstance()
-                .collection("cart_items")
-                .document(itemId.toString())
-                .update("quantity", qty)
-                .awaitTask()
+            appDao.updateCartQuantity(itemId, qty)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        try {
+            kotlinx.coroutines.withTimeoutOrNull(3000L) {
+                FirebaseFirestore.getInstance()
+                    .collection("cart_items")
+                    .document(itemId.toString())
+                    .update("quantity", qty)
+                    .awaitTask()
+            }
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -620,11 +675,18 @@ class AppRepository(private val appDao: AppDao) {
 
     suspend fun deleteCartItem(itemId: Int) {
         try {
-            FirebaseFirestore.getInstance()
-                .collection("cart_items")
-                .document(itemId.toString())
-                .delete()
-                .awaitTask()
+            appDao.deleteCartItem(itemId)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        try {
+            kotlinx.coroutines.withTimeoutOrNull(3000L) {
+                FirebaseFirestore.getInstance()
+                    .collection("cart_items")
+                    .document(itemId.toString())
+                    .delete()
+                    .awaitTask()
+            }
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -632,70 +694,80 @@ class AppRepository(private val appDao: AppDao) {
 
     suspend fun clearCart(email: String) {
         try {
-            val db = FirebaseFirestore.getInstance()
-            val snapshot = db.collection("cart_items")
-                .whereEqualTo("email", email)
-                .get()
-                .awaitTask()
-            snapshot.documents.forEach { doc ->
-                db.collection("cart_items").document(doc.id).delete().awaitTask()
+            appDao.clearCart(email)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        try {
+            kotlinx.coroutines.withTimeoutOrNull(4000L) {
+                val db = FirebaseFirestore.getInstance()
+                val snapshot = db.collection("cart_items")
+                    .whereEqualTo("email", email)
+                    .get()
+                    .awaitTask()
+                snapshot.documents.forEach { doc ->
+                    db.collection("cart_items").document(doc.id).delete().awaitTask()
+                }
             }
         } catch (e: Exception) {
             e.printStackTrace()
         }
     }
 
-    fun getWishlistItems(email: String): Flow<List<WishlistItem>> = callbackFlow {
-        val listener = FirebaseFirestore.getInstance()
-            .collection("wishlist_items")
-            .whereEqualTo("email", email)
-            .addSnapshotListener { snapshot, error ->
-                if (error != null) {
-                    close(error)
-                    return@addSnapshotListener
-                }
-                if (snapshot != null) {
-                    val list = snapshot.documents.mapNotNull { doc ->
-                        doc.data?.let { mapToWishlistItem(it) }
-                    }
-                    trySend(list)
-                }
-            }
-        awaitClose { listener.remove() }
-    }
+    fun getWishlistItems(email: String): Flow<List<WishlistItem>> = appDao.getWishlistItems(email)
 
     suspend fun getWishlistItem(email: String, prodId: Int): WishlistItem? {
         return try {
-            val snapshot = FirebaseFirestore.getInstance()
-                .collection("wishlist_items")
-                .whereEqualTo("email", email)
-                .whereEqualTo("productId", prodId)
-                .get()
-                .awaitTask()
-            if (!snapshot.isEmpty) {
-                mapToWishlistItem(snapshot.documents.first().data ?: emptyMap())
-            } else null
+            appDao.getWishlistItem(email, prodId)
         } catch (e: Exception) {
             null
         }
     }
 
+    suspend fun syncWishlistFromFirestore(email: String) {
+        try {
+            val snapshot = kotlinx.coroutines.withTimeoutOrNull(4000L) {
+                FirebaseFirestore.getInstance()
+                    .collection("wishlist_items")
+                    .whereEqualTo("email", email)
+                    .get()
+                    .awaitTask()
+            }
+            if (snapshot != null) {
+                val items = snapshot.documents.mapNotNull { doc ->
+                    doc.data?.let { mapToWishlistItem(it) }
+                }
+                appDao.clearWishlist(email)
+                items.forEach { appDao.insertWishlistItem(it) }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     suspend fun insertWishlistItem(item: WishlistItem) {
         try {
-            val db = FirebaseFirestore.getInstance()
-            val existing = db.collection("wishlist_items")
-                .whereEqualTo("email", item.email)
-                .whereEqualTo("productId", item.productId)
-                .get()
-                .awaitTask()
-
-            if (existing.isEmpty) {
-                val finalId = if (item.id == 0) (Math.random() * 10000000).toInt() else item.id
-                val finalItem = item.copy(id = finalId)
-                db.collection("wishlist_items")
-                    .document(finalId.toString())
-                    .set(wishlistItemToMap(finalItem))
+            appDao.insertWishlistItem(item)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        try {
+            kotlinx.coroutines.withTimeoutOrNull(3000L) {
+                val db = FirebaseFirestore.getInstance()
+                val existing = db.collection("wishlist_items")
+                    .whereEqualTo("email", item.email)
+                    .whereEqualTo("productId", item.productId)
+                    .get()
                     .awaitTask()
+
+                if (existing.isEmpty) {
+                    val finalId = if (item.id == 0) (Math.random() * 10000000).toInt() else item.id
+                    val finalItem = item.copy(id = finalId)
+                    db.collection("wishlist_items")
+                        .document(finalId.toString())
+                        .set(wishlistItemToMap(finalItem))
+                        .awaitTask()
+                }
             }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -704,14 +776,21 @@ class AppRepository(private val appDao: AppDao) {
 
     suspend fun deleteWishlistItem(email: String, prodId: Int) {
         try {
-            val db = FirebaseFirestore.getInstance()
-            val snapshot = db.collection("wishlist_items")
-                .whereEqualTo("email", email)
-                .whereEqualTo("productId", prodId)
-                .get()
-                .awaitTask()
-            snapshot.documents.forEach { doc ->
-                db.collection("wishlist_items").document(doc.id).delete().awaitTask()
+            appDao.deleteWishlistItem(email, prodId)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        try {
+            kotlinx.coroutines.withTimeoutOrNull(3000L) {
+                val db = FirebaseFirestore.getInstance()
+                val snapshot = db.collection("wishlist_items")
+                    .whereEqualTo("email", email)
+                    .whereEqualTo("productId", prodId)
+                    .get()
+                    .awaitTask()
+                snapshot.documents.forEach { doc ->
+                    db.collection("wishlist_items").document(doc.id).delete().awaitTask()
+                }
             }
         } catch (e: Exception) {
             e.printStackTrace()

@@ -11,9 +11,9 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
-import kotlin.coroutines.suspendCoroutine
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.suspendCancellableCoroutine
 import com.google.android.gms.tasks.Task
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
@@ -26,8 +26,11 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 
 // --- Coroutine Task Extension ---
-suspend fun <T> Task<T>.awaitTask(): T = suspendCoroutine { cont ->
+// Uses suspendCancellableCoroutine so coroutine timeouts/cancellations work properly.
+// Without this, Firebase callbacks could hang forever if the network drops mid-call.
+suspend fun <T> Task<T>.awaitTask(): T = suspendCancellableCoroutine { cont ->
     addOnCompleteListener { task ->
+        if (!cont.isActive) return@addOnCompleteListener
         if (task.isSuccessful) {
             cont.resume(task.result)
         } else {
@@ -356,6 +359,84 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
         observeCartAndWishlist()
         setupFirestoreSync()
         syncLocalDataToFirestore()
+        checkPersistedSession()
+        observeUserSessionChanges()
+    }
+
+    private fun checkPersistedSession() {
+        val prefs = getApplication<Application>().getSharedPreferences("bazaar_prefs", android.content.Context.MODE_PRIVATE)
+        val savedEmail = prefs.getString("logged_in_email", null)
+        val emailToCheck = savedEmail ?: FirebaseAuth.getInstance().currentUser?.email
+        
+        if (!emailToCheck.isNullOrBlank()) {
+            viewModelScope.launch {
+                val user = repository.getUser(emailToCheck)
+                if (user != null) {
+                    _currentUser.value = user
+                    _authState.value = AuthState.Success(user)
+                }
+            }
+        }
+    }
+
+    private fun observeUserSessionChanges() {
+        viewModelScope.launch {
+            _currentUser.collect { user ->
+                val prefs = getApplication<Application>().getSharedPreferences("bazaar_prefs", android.content.Context.MODE_PRIVATE)
+                if (user != null) {
+                    prefs.edit().putString("logged_in_email", user.email).apply()
+                } else {
+                    prefs.edit().remove("logged_in_email").apply()
+                }
+            }
+        }
+    }
+
+    private fun observeCartAndWishlist() {
+        viewModelScope.launch {
+            _currentUser.collectLatest { user ->
+                if (user != null) {
+                    // Sync Cart from Firestore to Room local cache once on login/restore
+                    repository.syncCartFromFirestore(user.email)
+                    
+                    // Collect cart locally from Room DB
+                    repository.getCartItems(user.email).collectLatest { cart ->
+                        _currentCart.value = cart
+                    }
+                } else {
+                    _currentCart.value = emptyList()
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            _currentUser.collectLatest { user ->
+                if (user != null) {
+                    // Sync Wishlist from Firestore to Room local cache once on login/restore
+                    repository.syncWishlistFromFirestore(user.email)
+                    
+                    // Collect wishlist locally from Room DB
+                    repository.getWishlistItems(user.email).collectLatest { wish ->
+                        _currentWishlist.value = wish
+                    }
+                } else {
+                    _currentWishlist.value = emptyList()
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            _currentUser.collectLatest { user ->
+                if (user != null) {
+                    // Collect orders
+                    repository.getOrders(user.email).collectLatest { orders ->
+                        _currentOrders.value = orders
+                    }
+                } else {
+                    _currentOrders.value = emptyList()
+                }
+            }
+        }
     }
 
     private fun setupFirestoreSync() {
@@ -537,46 +618,7 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private fun observeCartAndWishlist() {
-        viewModelScope.launch {
-            _currentUser.collectLatest { user ->
-                if (user != null) {
-                    // Collect cart
-                    repository.getCartItems(user.email).collectLatest { cart ->
-                        _currentCart.value = cart
-                    }
-                } else {
-                    _currentCart.value = emptyList()
-                }
-            }
-        }
 
-        viewModelScope.launch {
-            _currentUser.collectLatest { user ->
-                if (user != null) {
-                    // Collect wishlist
-                    repository.getWishlistItems(user.email).collectLatest { wish ->
-                        _currentWishlist.value = wish
-                    }
-                } else {
-                    _currentWishlist.value = emptyList()
-                }
-            }
-        }
-
-        viewModelScope.launch {
-            _currentUser.collectLatest { user ->
-                if (user != null) {
-                    // Collect orders
-                    repository.getOrders(user.email).collectLatest { orders ->
-                        _currentOrders.value = orders
-                    }
-                } else {
-                    _currentOrders.value = emptyList()
-                }
-            }
-        }
-    }
 
     // --- Search & Filter ---
     fun updateSearchQuery(query: String) {
@@ -588,6 +630,10 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // --- Actions: Authentication ---
+    fun resetAuthState() {
+        _authState.value = AuthState.Idle
+    }
+
     fun login(email: String, pword: String, role: String) {
         viewModelScope.launch {
             _authState.value = AuthState.Loading
@@ -806,6 +852,11 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun logout() {
+        try {
+            FirebaseAuth.getInstance().signOut()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
         _currentUser.value = null
         _authState.value = AuthState.Idle
     }
