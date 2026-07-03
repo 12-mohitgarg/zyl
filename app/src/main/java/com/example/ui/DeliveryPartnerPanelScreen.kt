@@ -756,6 +756,8 @@ fun DeliveryPartnerPanelScreen(viewModel: BazaarViewModel, onLogout: () -> Unit)
                         var editVehicleNumber by remember { mutableStateOf(currentUser?.deliveryVehicleNumber ?: "") }
                         var editEmergencyContact by remember { mutableStateOf(currentUser?.deliveryEmergencyContact ?: "") }
                         var editAddress by remember { mutableStateOf(currentUser?.deliveryAddress ?: "") }
+                        var editAddressLat by remember { mutableStateOf(currentUser?.deliveryAddressLat ?: 0.0) }
+                        var editAddressLng by remember { mutableStateOf(currentUser?.deliveryAddressLng ?: 0.0) }
 
                         Column(
                             modifier = Modifier
@@ -960,12 +962,17 @@ fun DeliveryPartnerPanelScreen(viewModel: BazaarViewModel, onLogout: () -> Unit)
                                     )
                                     Spacer(modifier = Modifier.height(10.dp))
 
-                                    OutlinedTextField(
+                                    AddressSuggestionField(
                                         value = editAddress,
                                         onValueChange = { editAddress = it },
-                                        label = { Text("Residential Address") },
-                                        modifier = Modifier.fillMaxWidth().testTag("edit_profile_address"),
-                                        shape = RoundedCornerShape(8.dp)
+                                        onAddressSelected = {
+                                            editAddress = it.address
+                                            editAddressLat = it.latitude
+                                            editAddressLng = it.longitude
+                                        },
+                                        label = "Residential Address",
+                                        modifier = Modifier.fillMaxWidth(),
+                                        testTag = "edit_profile_address"
                                     )
                                     Spacer(modifier = Modifier.height(16.dp))
 
@@ -980,7 +987,9 @@ fun DeliveryPartnerPanelScreen(viewModel: BazaarViewModel, onLogout: () -> Unit)
                                                     vehicleType = editVehicleType,
                                                     vehicleNumber = editVehicleNumber,
                                                     emergencyContact = editEmergencyContact,
-                                                    address = editAddress
+                                                    address = editAddress,
+                                                    addressLat = editAddressLat,
+                                                    addressLng = editAddressLng
                                                 )
                                                 Toast.makeText(context, "Profile change request applied successfully!", Toast.LENGTH_LONG).show()
                                             }

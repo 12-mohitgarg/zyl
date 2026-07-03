@@ -1,6 +1,7 @@
 package com.example.ui
 
 import android.app.Activity
+import android.content.Intent
 import android.widget.Toast
 import android.net.Uri
 import java.util.UUID
@@ -81,6 +82,10 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.util.Locale
+
+private const val HELP_WHATSAPP_NUMBER = "919101785067"
+private const val HELP_DISPLAY_MOBILE = "9101785067"
+private const val HELP_EMAIL = "zylvorbazaar@gmail.com"
 
 // Simple sealed hierarchy for Screens
 sealed class Screen(val route: String) {
@@ -319,6 +324,64 @@ fun animateTransition(target: Float, duration: Int): State<Float> {
 // 2. LOGIN SCREEN
 // ==========================================
 @Composable
+fun DeliveryLoginHero(
+    modifier: Modifier = Modifier,
+    badgeText: String
+) {
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(178.dp)
+            .shadow(10.dp, RoundedCornerShape(22.dp)),
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(containerColor = LightGreenSecondary)
+    ) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            Image(
+                painter = painterResource(id = R.drawable.img_delivery_login_hero),
+                contentDescription = "Fast grocery delivery partner",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.42f)),
+                            startY = 80f
+                        )
+                    )
+            )
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(14.dp)
+                    .background(CustomWhite.copy(alpha = 0.94f), RoundedCornerShape(16.dp))
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.DeliveryDining,
+                    contentDescription = null,
+                    tint = DarkGreenPrimary,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = badgeText,
+                    color = RichBlack,
+                    fontWeight = FontWeight.Black,
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+@Composable
 fun LoginScreen(
     viewModel: BazaarViewModel,
     onNavigateToRegister: () -> Unit
@@ -345,19 +408,7 @@ fun LoginScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Box(
-            modifier = Modifier
-                .size(90.dp)
-                .background(LightGreenSecondary, shape = CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = Icons.Default.LocalMall,
-                contentDescription = "Bazaar Launcher Icon",
-                tint = DarkGreenPrimary,
-                modifier = Modifier.size(44.dp)
-            )
-        }
+        DeliveryLoginHero(badgeText = "Fresh delivery in minutes")
 
         Spacer(modifier = Modifier.height(20.dp))
 
@@ -514,6 +565,8 @@ fun RegisterScreen(
     var selectedRole by remember { mutableStateOf("User") } // "User" or "Seller"
     var shopName by remember { mutableStateOf("") }
     var shopAddress by remember { mutableStateOf("") }
+    var shopAddressLat by remember { mutableStateOf(0.0) }
+    var shopAddressLng by remember { mutableStateOf(0.0) }
     
     // Step-by-Step wizard for Seller Verification
     var currentStep by remember { mutableStateOf(1) }
@@ -602,19 +655,7 @@ fun RegisterScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Box(
-            modifier = Modifier
-                .size(80.dp)
-                .background(LightGreenSecondary, shape = CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = Icons.Default.AppRegistration,
-                contentDescription = "Register",
-                tint = DarkGreenPrimary,
-                modifier = Modifier.size(40.dp)
-            )
-        }
+        DeliveryLoginHero(badgeText = "Join fast local delivery")
 
         Spacer(modifier = Modifier.height(16.dp))
 
@@ -740,13 +781,17 @@ fun RegisterScreen(
                 )
 
                 Spacer(modifier = Modifier.height(14.dp))
-                OutlinedTextField(
+                AddressSuggestionField(
                     value = shopAddress,
                     onValueChange = { shopAddress = it },
-                    label = { Text("Full Shop Address") },
-                    leadingIcon = { Icon(Icons.Default.Home, contentDescription = "Shop Address", tint = DarkGreenPrimary) },
-                    modifier = Modifier.fillMaxWidth().testTag("shop_address_registration"),
-                    shape = RoundedCornerShape(12.dp)
+                    onAddressSelected = {
+                        shopAddress = it.address
+                        shopAddressLat = it.latitude
+                        shopAddressLng = it.longitude
+                    },
+                    label = "Full Shop Address",
+                    modifier = Modifier.fillMaxWidth(),
+                    testTag = "shop_address_registration"
                 )
             }
 
@@ -1176,6 +1221,8 @@ fun RegisterScreen(
                                     role = selectedRole,
                                     shopName = shopName,
                                     shopAddress = shopAddress,
+                                    shopAddressLat = shopAddressLat,
+                                    shopAddressLng = shopAddressLng,
                                     sellerMobile = sellerMobile,
                                     sellerAadhaar = sellerAadhaar,
                                     sellerShopPhoto = sellerShopPhoto,
@@ -1384,12 +1431,16 @@ fun RegisterScreen(
                 Spacer(modifier = Modifier.height(14.dp))
 
                 // 4. Full Residential Address
-                OutlinedTextField(
+                AddressSuggestionField(
                     value = shopAddress,
                     onValueChange = { shopAddress = it },
-                    label = { Text("Full Residential Address") },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp)
+                    onAddressSelected = {
+                        shopAddress = it.address
+                        shopAddressLat = it.latitude
+                        shopAddressLng = it.longitude
+                    },
+                    label = "Full Residential Address",
+                    modifier = Modifier.fillMaxWidth()
                 )
 
                 Spacer(modifier = Modifier.height(14.dp))
@@ -1527,6 +1578,8 @@ fun RegisterScreen(
                                     role = selectedRole,
                                     shopName = "Zyl Vor Delivery",
                                     shopAddress = shopAddress,
+                                    shopAddressLat = shopAddressLat,
+                                    shopAddressLng = shopAddressLng,
                                     sellerMobile = sellerMobile,
                                     sellerAadhaar = sellerAadhaar,
                                     sellerShopPhoto = "",
@@ -1536,6 +1589,8 @@ fun RegisterScreen(
                                     deliveryAadhaar = sellerAadhaar,
                                     deliveryPhoto = sellerOwnerPhoto,
                                     deliveryAddress = shopAddress,
+                                    deliveryAddressLat = shopAddressLat,
+                                    deliveryAddressLng = shopAddressLng,
                                     deliveryBankAccount = "$bankAccountNum ($bankIfsc)",
                                     deliveryEmergencyContact = deliveryEmergencyContact,
                                     deliveryVehicleType = deliveryVehicleType,
@@ -1664,6 +1719,8 @@ fun MainScreen(
                             customOrderId = pending.orderId,
                             deliveryAddress = pending.address,
                             couponApplied = pending.coupon,
+                            deliveryAddressLat = pending.addressLat,
+                            deliveryAddressLng = pending.addressLng,
                             clearCartAfterCheckout = pending.clearCartAfterCheckout
                         )
                         viewModel.notifyCheckoutSuccess()
@@ -1741,32 +1798,47 @@ fun MainScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            if (showProductDetail != null) {
-                ProductDetailPane(
-                    product = showProductDetail!!,
-                    onBack = { showProductDetail = null },
-                    viewModel = viewModel
-                )
-            } else {
-                when (selectedTab) {
-                    BottomTab.Home -> HomeScreen(
-                        viewModel = viewModel,
-                        onProductSelect = { showProductDetail = it },
-                        onProductBuy = { directBuyProduct = it }
+            AnimatedContent(
+                targetState = showProductDetail to selectedTab,
+                modifier = Modifier.fillMaxSize(),
+                transitionSpec = {
+                    (fadeIn(animationSpec = tween(220)) + slideInHorizontally(
+                        animationSpec = tween(260, easing = FastOutSlowInEasing),
+                        initialOffsetX = { it / 5 }
+                    )) togetherWith (fadeOut(animationSpec = tween(160)) + slideOutHorizontally(
+                        animationSpec = tween(220, easing = FastOutSlowInEasing),
+                        targetOffsetX = { -it / 8 }
+                    ))
+                },
+                label = "main_content_transition"
+            ) { (detailProduct, tab) ->
+                if (detailProduct != null) {
+                    ProductDetailPane(
+                        product = detailProduct,
+                        onBack = { showProductDetail = null },
+                        viewModel = viewModel
                     )
-                    BottomTab.Categories -> CategoriesScreen(
-                        viewModel = viewModel,
-                        onProductSelect = { showProductDetail = it },
-                        onProductBuy = { directBuyProduct = it }
-                    )
-                    BottomTab.Cart -> CartScreen(viewModel = viewModel, activity = activity, onBackToShopping = { selectedTab = BottomTab.Home })
-                    BottomTab.Wishlist -> WishlistScreen(
-                        viewModel = viewModel,
-                        onProductSelect = { showProductDetail = it },
-                        onProductBuy = { directBuyProduct = it }
-                    )
-                    BottomTab.Orders -> OrdersScreen(viewModel = viewModel)
-                    BottomTab.Profile -> ProfileScreen(viewModel = viewModel, onLogout = onLogout)
+                } else {
+                    when (tab) {
+                        BottomTab.Home -> HomeScreen(
+                            viewModel = viewModel,
+                            onProductSelect = { showProductDetail = it },
+                            onProductBuy = { directBuyProduct = it }
+                        )
+                        BottomTab.Categories -> CategoriesScreen(
+                            viewModel = viewModel,
+                            onProductSelect = { showProductDetail = it },
+                            onProductBuy = { directBuyProduct = it }
+                        )
+                        BottomTab.Cart -> CartScreen(viewModel = viewModel, activity = activity, onBackToShopping = { selectedTab = BottomTab.Home })
+                        BottomTab.Wishlist -> WishlistScreen(
+                            viewModel = viewModel,
+                            onProductSelect = { showProductDetail = it },
+                            onProductBuy = { directBuyProduct = it }
+                        )
+                        BottomTab.Orders -> OrdersScreen(viewModel = viewModel)
+                        BottomTab.Profile -> ProfileScreen(viewModel = viewModel, onLogout = onLogout)
+                    }
                 }
             }
 
@@ -1812,6 +1884,125 @@ private suspend fun getLocationText(context: android.content.Context): String {
         }
     } catch (e: Exception) {
         "Location unavailable"
+    }
+}
+
+data class AddressSelection(
+    val address: String,
+    val latitude: Double = 0.0,
+    val longitude: Double = 0.0
+)
+
+@Composable
+fun AddressSuggestionField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    onAddressSelected: (AddressSelection) -> Unit,
+    label: String,
+    modifier: Modifier = Modifier,
+    testTag: String? = null,
+    maxLines: Int = 3
+) {
+    val context = LocalContext.current
+    var suggestions by remember { mutableStateOf<List<AddressSelection>>(emptyList()) }
+    var isSearching by remember { mutableStateOf(false) }
+
+    LaunchedEffect(value) {
+        if (value.trim().length < 3) {
+            suggestions = emptyList()
+            return@LaunchedEffect
+        }
+        isSearching = true
+        delay(350L)
+        suggestions = withContext(Dispatchers.IO) {
+            try {
+                @Suppress("DEPRECATION")
+                Geocoder(context, Locale.getDefault())
+                    .getFromLocationName(value.trim(), 5)
+                    ?.mapNotNull { addr ->
+                        val line = addr.getAddressLine(0)
+                        if (line.isNullOrBlank()) {
+                            null
+                        } else {
+                            AddressSelection(line, addr.latitude, addr.longitude)
+                        }
+                    }
+                    ?.distinctBy { it.address }
+                    ?: emptyList()
+            } catch (e: Exception) {
+                emptyList()
+            }
+        }
+        isSearching = false
+    }
+
+    Column(modifier = modifier) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = {
+                onValueChange(it)
+                onAddressSelected(AddressSelection(it))
+            },
+            label = { Text(label) },
+            leadingIcon = { Icon(Icons.Default.LocationOn, contentDescription = label, tint = DarkGreenPrimary) },
+            trailingIcon = {
+                if (isSearching) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = DarkGreenPrimary)
+                }
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(if (testTag != null) Modifier.testTag(testTag) else Modifier),
+            singleLine = false,
+            maxLines = maxLines,
+            shape = RoundedCornerShape(12.dp),
+            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = DarkGreenPrimary)
+        )
+
+        AnimatedVisibility(visible = suggestions.isNotEmpty()) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 6.dp),
+                colors = CardDefaults.cardColors(containerColor = CustomWhite),
+                border = BorderStroke(1.dp, SoftGrey),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                    suggestions.take(4).forEach { suggestion ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    onValueChange(suggestion.address)
+                                    onAddressSelected(suggestion)
+                                    suggestions = emptyList()
+                                }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Icon(Icons.Default.Place, contentDescription = null, tint = DarkGreenPrimary, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Text(
+                                    text = suggestion.address,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = RichBlack,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "Lat ${String.format("%.5f", suggestion.latitude)}, Lng ${String.format("%.5f", suggestion.longitude)}",
+                                    fontSize = 10.sp,
+                                    color = MutedText
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -2593,6 +2784,7 @@ fun ProductItemCard(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onCallSelect() }
+            .animateContentSize(animationSpec = tween(220, easing = FastOutSlowInEasing))
             .testTag("product_item_${product.id}"),
         colors = CardDefaults.cardColors(containerColor = CustomWhite),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
@@ -2604,7 +2796,7 @@ fun ProductItemCard(
                 .height(140.dp)
                 .background(SoftGrey)
         ) {
-            // Display actual product photo if available, fallback to default banner or category-specific visual icon
+            // Display actual product photo if available, otherwise use a category visual.
             if (primaryPhotoUrl.isNotBlank()) {
                 AsyncImage(
                     model = primaryPhotoUrl,
@@ -2613,13 +2805,6 @@ fun ProductItemCard(
                     contentScale = ContentScale.Crop,
                     placeholder = painterResource(id = R.drawable.img_hero_banner_1782139859933),
                     error = painterResource(id = R.drawable.img_hero_banner_1782139859933)
-                )
-            } else if (product.id == 1) {
-                Image(
-                    painter = painterResource(id = R.drawable.img_hero_banner_1782139859933),
-                    contentDescription = product.name,
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
                 )
             } else {
                 Box(
@@ -3023,6 +3208,8 @@ fun CartScreen(
     var showCartCheckoutDialog by remember { mutableStateOf(false) }
     var cartCheckoutStep by remember { mutableStateOf(1) } // 1: Address, 2: Payment/Coupon, 3: Success
     var cartTempAddress by remember { mutableStateOf("") }
+    var cartTempAddressLat by remember { mutableStateOf(0.0) }
+    var cartTempAddressLng by remember { mutableStateOf(0.0) }
     var cartCouponText by remember { mutableStateOf("") }
     var cartIsCouponApplied by remember { mutableStateOf(false) }
     var generatedCartOrderId by remember { mutableStateOf("") }
@@ -3032,6 +3219,8 @@ fun CartScreen(
     LaunchedEffect(user) {
         if (cartTempAddress.isEmpty() && !user?.savedAddress.isNullOrEmpty()) {
             cartTempAddress = user!!.savedAddress
+            cartTempAddressLat = user!!.savedAddressLat
+            cartTempAddressLng = user!!.savedAddressLng
         }
     }
 
@@ -3256,22 +3445,24 @@ fun CartScreen(
                         1 -> {
                             Text("Step 1: Confirm Shipping Address", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = RichBlack)
                             Spacer(modifier = Modifier.height(10.dp))
-                            OutlinedTextField(
+                            AddressSuggestionField(
                                 value = cartTempAddress,
                                 onValueChange = { cartTempAddress = it },
-                                label = { Text("Delivery Address Details") },
+                                onAddressSelected = {
+                                    cartTempAddress = it.address
+                                    cartTempAddressLat = it.latitude
+                                    cartTempAddressLng = it.longitude
+                                },
+                                label = "Delivery Address Details",
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("cart_checkout_address"),
-                                singleLine = false,
-                                maxLines = 3,
-                                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = DarkGreenPrimary)
+                                    .fillMaxWidth(),
+                                testTag = "cart_checkout_address"
                             )
                             Spacer(modifier = Modifier.height(20.dp))
                             Button(
                                 onClick = {
                                     if (cartTempAddress.isNotBlank()) {
-                                        viewModel.updateAddress(cartTempAddress)
+                                        viewModel.updateAddress(cartTempAddress, cartTempAddressLat, cartTempAddressLng)
                                         cartCheckoutStep = 2
                                     } else {
                                         Toast.makeText(context, "Address cannot be empty", Toast.LENGTH_SHORT).show()
@@ -3382,7 +3573,9 @@ fun CartScreen(
                                                 summary = summary,
                                                 orderId = generatedCartOrderId,
                                                 address = cartTempAddress,
-                                                coupon = if (cartIsCouponApplied) cartCouponText else ""
+                                                coupon = if (cartIsCouponApplied) cartCouponText else "",
+                                                addressLat = cartTempAddressLat,
+                                                addressLng = cartTempAddressLng
                                             )
                                         )
                                         try {
@@ -3548,13 +3741,6 @@ fun CartItemRow(
                         contentScale = ContentScale.Crop,
                         placeholder = painterResource(id = R.drawable.img_hero_banner_1782139859933),
                         error = painterResource(id = R.drawable.img_hero_banner_1782139859933)
-                    )
-                } else if (product.id == 1) {
-                    Image(
-                        painter = painterResource(id = R.drawable.img_hero_banner_1782139859933),
-                        contentDescription = product.name,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop
                     )
                 } else {
                     Icon(
@@ -3765,6 +3951,7 @@ fun OrdersScreen(viewModel: BazaarViewModel) {
                 items(orderList) { order ->
                     OrderItemCard(
                         order = order,
+                        allProducts = allProducts,
                         onClick = { selectedOrderForDetail = order }
                     )
                 }
@@ -3775,6 +3962,9 @@ fun OrdersScreen(viewModel: BazaarViewModel) {
     // --- Flipkart/Amazon/Meesho Style Full Order Details Screen ---
     if (selectedOrderForDetail != null) {
         val order = selectedOrderForDetail!!
+        val orderLines = remember(order, allProducts) { buildOrderProductLines(order, allProducts) }
+        val displayStatus = orderDisplayStatus(order)
+        val placedOn = formatOrderDate(order.orderDate)
         Dialog(onDismissRequest = { selectedOrderForDetail = null }) {
             Surface(
                 modifier = Modifier
@@ -3810,7 +4000,7 @@ fun OrdersScreen(viewModel: BazaarViewModel) {
                         Box(
                             modifier = Modifier
                                 .background(
-                                    color = when (order.status.uppercase()) {
+                                    color = when (displayStatus.uppercase()) {
                                         "DELIVERED", "SUCCESS" -> DarkGreenPrimary.copy(alpha = 0.1f)
                                         "CANCELLED" -> AccentRed.copy(alpha = 0.1f)
                                         else -> LightGreenSecondary
@@ -3820,9 +4010,9 @@ fun OrdersScreen(viewModel: BazaarViewModel) {
                                 .padding(horizontal = 10.dp, vertical = 4.dp)
                         ) {
                             Text(
-                                text = order.status,
+                                text = displayStatus,
                                 fontWeight = FontWeight.Bold,
-                                color = when (order.status.uppercase()) {
+                                color = when (displayStatus.uppercase()) {
                                     "DELIVERED", "SUCCESS" -> DarkGreenPrimary
                                     "CANCELLED" -> AccentRed
                                     else -> DarkGreenPrimary
@@ -3850,7 +4040,7 @@ fun OrdersScreen(viewModel: BazaarViewModel) {
                             }
                             Column(horizontalAlignment = Alignment.End) {
                                 Text("Placed On", fontSize = 11.sp, color = MutedText)
-                                Text("2026-06-24 UTC", fontWeight = FontWeight.Bold, color = RichBlack, fontSize = 13.sp)
+                                Text(placedOn, fontWeight = FontWeight.Bold, color = RichBlack, fontSize = 13.sp)
                             }
                         }
 
@@ -3866,11 +4056,11 @@ fun OrdersScreen(viewModel: BazaarViewModel) {
                                 Text("Delivery Status Tracker", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = DarkGreenPrimary)
                                 Spacer(modifier = Modifier.height(10.dp))
 
-                                val isCancelled = order.status.equals("Cancelled", ignoreCase = true)
-                                val isAccepted = order.status.equals("Accepted", ignoreCase = true)
-                                val isShippingReady = order.status.equals("Shipping Ready", ignoreCase = true) || order.status.equals("Shipped", ignoreCase = true) || order.status.equals("Ready to Deliver", ignoreCase = true)
-                                val isOnTheWay = order.status.equals("On the Way", ignoreCase = true)
-                                val isDelivered = order.status.equals("Delivered", ignoreCase = true) || order.status.equals("Success", ignoreCase = true)
+                                val isCancelled = displayStatus.equals("Cancelled", ignoreCase = true)
+                                val isAccepted = displayStatus.equals("Accepted", ignoreCase = true) || order.sellerConfirmed
+                                val isShippingReady = displayStatus.equals("Shipping Ready", ignoreCase = true) || displayStatus.equals("Shipped", ignoreCase = true) || displayStatus.equals("Ready to Deliver", ignoreCase = true)
+                                val isOnTheWay = displayStatus.equals("On the Way", ignoreCase = true)
+                                val isDelivered = displayStatus.equals("Delivered", ignoreCase = true) || displayStatus.equals("Success", ignoreCase = true)
 
                                 val progressValue = when {
                                     isCancelled -> 0.0f
@@ -3903,11 +4093,11 @@ fun OrdersScreen(viewModel: BazaarViewModel) {
 
                                 if (isCancelled) {
                                     Spacer(modifier = Modifier.height(6.dp))
-                                    Text("⚠️ This order was Cancelled by seller or client.", color = AccentRed, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                    Text("This order was cancelled by seller or customer.", color = AccentRed, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                                 } else {
                                     Spacer(modifier = Modifier.height(6.dp))
                                     Text(
-                                        text = if (isDelivered) "🎉 Package delivered safely to destination." else "🚚 Estimated delivery: Within 2 days.",
+                                        text = if (isDelivered) "Package delivered safely to destination." else "Estimated delivery: Within 2 days.",
                                         fontSize = 11.sp,
                                         color = RichBlack,
                                         fontWeight = FontWeight.SemiBold
@@ -3918,19 +4108,12 @@ fun OrdersScreen(viewModel: BazaarViewModel) {
 
                         Spacer(modifier = Modifier.height(16.dp))
 
-                        // Match and list items in this order
-                        Text("Items in Order", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = RichBlack)
+                        Text("Products in This Order", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = RichBlack)
                         Spacer(modifier = Modifier.height(8.dp))
 
-                        // Try to find matching products
-                        val itemsSplits = order.itemsSummary.split(",")
-                        itemsSplits.forEach { rawItemName ->
-                            val cleanName = rawItemName.substringBefore(" x").substringBefore(" (").trim()
-                            val qtyText = rawItemName.substringAfter("x", "").substringAfter("Qty: ", "").substringBefore(")").trim()
-                            val qty = qtyText.toIntOrNull() ?: 1
-
-                            val matchingProduct = allProducts.find { it.name.equals(cleanName, ignoreCase = true) || cleanName.contains(it.name, ignoreCase = true) }
-
+                        orderLines.forEach { line ->
+                            val matchingProduct = line.product
+                            val itemTotal = (matchingProduct?.price ?: 0.0) * line.quantity
                             Card(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -3952,14 +4135,28 @@ fun OrdersScreen(viewModel: BazaarViewModel) {
                                             .background(LightGreenSecondary.copy(alpha = 0.4f), shape = RoundedCornerShape(8.dp)),
                                         contentAlignment = Alignment.Center
                                     ) {
-                                        Icon(Icons.Default.Inventory2, contentDescription = "", tint = DarkGreenPrimary, modifier = Modifier.size(24.dp))
+                                        val photoUrl = matchingProduct?.primaryPhotoUrl().orEmpty()
+                                        if (photoUrl.isNotBlank()) {
+                                            AsyncImage(
+                                                model = photoUrl,
+                                                contentDescription = matchingProduct?.name ?: line.name,
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .clip(RoundedCornerShape(8.dp)),
+                                                contentScale = ContentScale.Crop,
+                                                placeholder = painterResource(id = R.drawable.img_hero_banner_1782139859933),
+                                                error = painterResource(id = R.drawable.img_hero_banner_1782139859933)
+                                            )
+                                        } else {
+                                            Icon(Icons.Default.Inventory2, contentDescription = "", tint = DarkGreenPrimary, modifier = Modifier.size(24.dp))
+                                        }
                                     }
 
                                     Spacer(modifier = Modifier.width(12.dp))
 
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
-                                            text = matchingProduct?.name ?: cleanName,
+                                            text = matchingProduct?.name ?: line.name,
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 12.sp,
                                             color = RichBlack,
@@ -3967,23 +4164,43 @@ fun OrdersScreen(viewModel: BazaarViewModel) {
                                             overflow = TextOverflow.Ellipsis
                                         )
                                         Text(
-                                            text = "Qty: $qty | Category: ${matchingProduct?.category ?: "Bazaar Premium"}",
+                                            text = "Qty: ${line.quantity} | Category: ${matchingProduct?.category ?: "Bazaar Premium"}",
                                             fontSize = 10.sp,
                                             color = MutedText
                                         )
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            text = matchingProduct?.description?.ifBlank { "No description available" } ?: line.rawText,
+                                            fontSize = 10.sp,
+                                            color = MutedText,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Spacer(modifier = Modifier.height(3.dp))
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
                                             Text(
-                                                text = "₹${matchingProduct?.price ?: "299.99"}",
+                                                text = if (matchingProduct != null) "₹${String.format("%.2f", matchingProduct.price)} each" else "Price included",
                                                 fontWeight = FontWeight.ExtraBold,
                                                 fontSize = 12.sp,
                                                 color = DarkGreenPrimary
                                             )
-                                            if (matchingProduct != null) {
-                                                Spacer(modifier = Modifier.width(6.dp))
-                                                Icon(Icons.Default.Star, contentDescription = "", tint = Color(0xFFFFB300), modifier = Modifier.size(12.dp))
-                                                Text(text = " ${matchingProduct.rating} ★", fontSize = 10.sp, color = MutedText)
-                                            }
+                                            Text(
+                                                text = if (matchingProduct != null) "Line total ₹${String.format("%.2f", itemTotal)}" else displayStatus,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = RichBlack
+                                            )
                                         }
+                                        Spacer(modifier = Modifier.height(3.dp))
+                                        Text(
+                                            text = "Status: $displayStatus",
+                                            fontSize = 10.sp,
+                                            color = if (displayStatus.equals("Cancelled", ignoreCase = true)) AccentRed else DarkGreenPrimary,
+                                            fontWeight = FontWeight.Bold
+                                        )
                                     }
                                 }
                             }
@@ -4010,7 +4227,17 @@ fun OrdersScreen(viewModel: BazaarViewModel) {
                                         fontWeight = FontWeight.Medium
                                     )
                                     Spacer(modifier = Modifier.height(4.dp))
-                                    Text("Safe contactless delivery enabled.", fontSize = 10.sp, color = MutedText)
+                                    Text("Delivery status: ${order.deliveryStatus.ifBlank { displayStatus }}", fontSize = 10.sp, color = MutedText)
+                                    if (order.deliveryAddressLat != 0.0 || order.deliveryAddressLng != 0.0) {
+                                        Text(
+                                            "Coordinates: ${String.format("%.5f", order.deliveryAddressLat)}, ${String.format("%.5f", order.deliveryAddressLng)}",
+                                            fontSize = 10.sp,
+                                            color = MutedText
+                                        )
+                                    }
+                                    if (order.deliveryPartnerEmail.isNotBlank()) {
+                                        Text("Delivery partner: ${order.deliveryPartnerEmail}", fontSize = 10.sp, color = MutedText)
+                                    }
                                 }
                             }
                         }
@@ -4029,6 +4256,11 @@ fun OrdersScreen(viewModel: BazaarViewModel) {
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                     Text("Subtotal", fontSize = 11.sp, color = MutedText)
                                     Text("₹${String.format("%.2f", order.totalAmount)}", fontSize = 11.sp, color = RichBlack, fontWeight = FontWeight.Bold)
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("Payment mode", fontSize = 11.sp, color = MutedText)
+                                    Text(order.paymentMode, fontSize = 11.sp, color = RichBlack, fontWeight = FontWeight.Bold)
                                 }
                                 if (order.couponApplied.isNotBlank()) {
                                     Spacer(modifier = Modifier.height(4.dp))
@@ -4071,17 +4303,27 @@ fun OrdersScreen(viewModel: BazaarViewModel) {
                             }
 
                             Button(
-                                onClick = {
-                                    Toast.makeText(context, "Redirecting to Live Help Desk", Toast.LENGTH_SHORT).show()
-                                },
+                                onClick = { openHelpWhatsApp(context) },
                                 modifier = Modifier.weight(1f),
                                 shape = RoundedCornerShape(8.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary)
                             ) {
                                 Icon(Icons.Default.SupportAgent, contentDescription = "", tint = CustomWhite, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("Live Support", fontSize = 11.sp, color = CustomWhite)
+                                Text("WhatsApp", fontSize = 11.sp, color = CustomWhite)
                             }
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = { openHelpEmail(context) },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = DarkGreenPrimary),
+                            border = BorderStroke(1.dp, DarkGreenPrimary)
+                        ) {
+                            Icon(Icons.Default.Email, contentDescription = "", modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Email $HELP_EMAIL", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -4090,15 +4332,70 @@ fun OrdersScreen(viewModel: BazaarViewModel) {
     }
 }
 
+data class OrderProductLine(
+    val rawText: String,
+    val name: String,
+    val quantity: Int,
+    val product: Product?
+)
+
+fun buildOrderProductLines(order: Order, products: List<Product>): List<OrderProductLine> {
+    return order.itemsSummary
+        .split(",")
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .map { raw ->
+            val qty = Regex("""(?:x|Qty:\s*)\s*(\d+)""", RegexOption.IGNORE_CASE)
+                .find(raw)
+                ?.groupValues
+                ?.getOrNull(1)
+                ?.toIntOrNull()
+                ?: 1
+            val cleanName = raw
+                .substringBefore(" x")
+                .substringBefore(" Qty:")
+                .substringBefore(" (")
+                .trim()
+                .ifBlank { raw }
+            val product = products.find {
+                it.name.equals(cleanName, ignoreCase = true) ||
+                    cleanName.contains(it.name, ignoreCase = true) ||
+                    it.name.contains(cleanName, ignoreCase = true)
+            }
+            OrderProductLine(rawText = raw, name = cleanName, quantity = qty, product = product)
+        }
+}
+
+fun orderDisplayStatus(order: Order): String {
+    return when {
+        order.status.equals("Cancelled", ignoreCase = true) -> "Cancelled"
+        order.deliveryStatus.isNotBlank() -> order.deliveryStatus
+        order.status.isNotBlank() -> order.status
+        else -> "Processing"
+    }
+}
+
+fun formatOrderDate(timestamp: Long): String {
+    if (timestamp <= 0L) return "Date unavailable"
+    return java.text.SimpleDateFormat("dd MMM yyyy, hh:mm a", java.util.Locale.US)
+        .format(java.util.Date(timestamp))
+}
+
 @Composable
 fun OrderItemCard(
     order: Order,
+    allProducts: List<Product>,
     onClick: () -> Unit
 ) {
+    val displayStatus = orderDisplayStatus(order)
+    val orderLines = remember(order, allProducts) { buildOrderProductLines(order, allProducts) }
+    val progress = orderProgress(displayStatus, order.sellerConfirmed)
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onClick() },
+            .animateContentSize(animationSpec = tween(220, easing = FastOutSlowInEasing)),
         colors = CardDefaults.cardColors(containerColor = CustomWhite),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         border = BorderStroke(1.dp, SoftGrey)
@@ -4118,13 +4415,16 @@ fun OrderItemCard(
                 )
                 Box(
                     modifier = Modifier
-                        .background(LightGreenSecondary, shape = RoundedCornerShape(12.dp))
+                        .background(
+                            if (displayStatus.equals("Cancelled", ignoreCase = true)) AccentRed.copy(alpha = 0.1f) else LightGreenSecondary,
+                            shape = RoundedCornerShape(12.dp)
+                        )
                         .padding(horizontal = 10.dp, vertical = 4.dp)
                 ) {
                     Text(
-                        text = order.status,
+                        text = displayStatus,
                         fontWeight = FontWeight.Bold,
-                        color = DarkGreenPrimary,
+                        color = if (displayStatus.equals("Cancelled", ignoreCase = true)) AccentRed else DarkGreenPrimary,
                         fontSize = 12.sp
                     )
                 }
@@ -4133,7 +4433,7 @@ fun OrderItemCard(
             Spacer(modifier = Modifier.height(10.dp))
 
             Text(
-                text = "Items: ${order.itemsSummary}",
+                text = "Items: ${orderLines.joinToString { "${it.name} x${it.quantity}" }}",
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Bold,
                 color = RichBlack,
@@ -4154,7 +4454,7 @@ fun OrderItemCard(
                     color = RichBlack
                 )
                 Text(
-                    text = "Date: 2026-06-24", // Clean formatted mock date
+                    text = formatOrderDate(order.orderDate),
                     fontSize = 12.sp,
                     color = MutedText
                 )
@@ -4169,21 +4469,34 @@ fun OrderItemCard(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text("Processing", fontSize = 10.sp, color = DarkGreenPrimary, fontWeight = FontWeight.Bold)
-                    Text("In Transit", fontSize = 10.sp, color = MutedText)
-                    Text("Delivered", fontSize = 10.sp, color = MutedText)
+                    Text("In Transit", fontSize = 10.sp, color = if (progress >= 0.5f) DarkGreenPrimary else MutedText)
+                    Text("Delivered", fontSize = 10.sp, color = if (progress >= 1f) DarkGreenPrimary else MutedText)
                 }
                 Spacer(modifier = Modifier.height(4.dp))
                 LinearProgressIndicator(
-                    progress = 0.35f,
+                    progress = progress,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(6.dp)
                         .clip(RoundedCornerShape(3.dp)),
-                    color = DarkGreenPrimary,
+                    color = if (displayStatus.equals("Cancelled", ignoreCase = true)) AccentRed else DarkGreenPrimary,
                     trackColor = SoftGrey
                 )
             }
         }
+    }
+}
+
+fun orderProgress(status: String, sellerConfirmed: Boolean): Float {
+    return when {
+        status.equals("Cancelled", ignoreCase = true) -> 0f
+        status.equals("Delivered", ignoreCase = true) || status.equals("Success", ignoreCase = true) -> 1f
+        status.equals("On the Way", ignoreCase = true) -> 0.75f
+        status.equals("Shipping Ready", ignoreCase = true) ||
+            status.equals("Ready to Deliver", ignoreCase = true) ||
+            status.equals("Shipped", ignoreCase = true) -> 0.5f
+        status.equals("Accepted", ignoreCase = true) || sellerConfirmed -> 0.25f
+        else -> 0.1f
     }
 }
 
@@ -4205,7 +4518,7 @@ fun ProfileScreen(
     var showCards by remember { mutableStateOf(false) }
     var showLanguage by remember { mutableStateOf(false) }
     var showPrivacy by remember { mutableStateOf(false) }
-    var showDevices by remember { mutableStateOf(false) }
+    var showHelpCenter by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = Modifier
@@ -4330,28 +4643,6 @@ fun ProfileScreen(
             )
         }
 
-        // Section header: Device options
-        item {
-            Text(
-                text = "SECURITY & SYSTEMS",
-                style = MaterialTheme.typography.bodySmall.copy(
-                    fontWeight = FontWeight.Black,
-                    color = MutedText
-                ),
-                modifier = Modifier.padding(start = 20.dp, top = 16.dp, bottom = 4.dp)
-            )
-        }
-
-        // Connected devices manager
-        item {
-            ProfileInteractiveRow(
-                icon = Icons.Default.PhoneAndroid,
-                title = "Manage Linked Devices",
-                description = "Linked: ${user?.deviceCount ?: 1} active device session(s). View & revoke access.",
-                onClick = { showDevices = true }
-            )
-        }
-
         // Headings: Profile customization options
         item {
             Text(
@@ -4470,26 +4761,13 @@ fun ProfileScreen(
             )
         }
 
-        // Wipe Database Dev Button
         item {
-            Spacer(modifier = Modifier.height(16.dp))
-            Button(
-                onClick = {
-                    viewModel.wipeDummyData {
-                        Toast.makeText(context, "Database wiped and configs seeded successfully!", Toast.LENGTH_LONG).show()
-                    }
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp)
-                    .height(50.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE65100)),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Icon(Icons.Default.DeleteForever, contentDescription = "Wipe Database", tint = CustomWhite)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Wipe & Clear Database (Dev Mode)", color = CustomWhite, fontWeight = FontWeight.Bold)
-            }
+            ProfileInteractiveRow(
+                icon = Icons.Default.SupportAgent,
+                title = "Help Center",
+                description = "WhatsApp $HELP_DISPLAY_MOBILE or email $HELP_EMAIL",
+                onClick = { showHelpCenter = true }
+            )
         }
 
         // Logout
@@ -4637,117 +4915,6 @@ fun ProfileScreen(
         }
     }
 
-    // --- Sub-Dialog Popup: Manage Devices ---
-    if (showDevices) {
-        val deviceCount = user?.deviceCount ?: 1
-        Dialog(onDismissRequest = { showDevices = false }) {
-            Surface(
-                modifier = Modifier.shadow(8.dp),
-                shape = RoundedCornerShape(16.dp),
-                color = CustomWhite
-            ) {
-                Column(
-                    modifier = Modifier.padding(24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = "Manage Active Sessions",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = RichBlack
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Linked device logins connected to your ZYL VOR BAZAAR account.",
-                        fontSize = 11.sp,
-                        color = MutedText,
-                        textAlign = TextAlign.Center
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    // List of devices
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        // Current device
-                        DeviceRow(
-                            name = "Google Pixel 8 Pro (This Device)",
-                            status = "Active Session Now",
-                            canRemove = false,
-                            onRemove = {}
-                        )
-
-                        if (deviceCount >= 2) {
-                            DeviceRow(
-                                name = "Apple iPad Air (Safari)",
-                                status = "Active 20m ago",
-                                canRemove = true,
-                                onRemove = {
-                                    viewModel.removeDevice()
-                                    Toast.makeText(context, "iPad Session Revoked", Toast.LENGTH_SHORT).show()
-                                }
-                            )
-                        }
-
-                        if (deviceCount >= 3) {
-                            DeviceRow(
-                                name = "Windows PC - Chrome Web",
-                                status = "Active 1 day ago",
-                                canRemove = true,
-                                onRemove = {
-                                    viewModel.removeDevice()
-                                    Toast.makeText(context, "Windows PC Session Revoked", Toast.LENGTH_SHORT).show()
-                                }
-                            )
-                        }
-
-                        if (deviceCount >= 4) {
-                            for (i in 4..deviceCount) {
-                                DeviceRow(
-                                    name = "Secondary Device #$i",
-                                    status = "Active recently",
-                                    canRemove = true,
-                                    onRemove = {
-                                        viewModel.removeDevice()
-                                        Toast.makeText(context, "Session #$i Revoked", Toast.LENGTH_SHORT).show()
-                                    }
-                                )
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(20.dp))
-
-                    // Bottom controls
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        TextButton(
-                            onClick = {
-                                viewModel.addDevice()
-                                Toast.makeText(context, "Linked new device session", Toast.LENGTH_SHORT).show()
-                            }
-                        ) {
-                            Icon(Icons.Default.Add, contentDescription = "", tint = DarkGreenPrimary)
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Link Device", color = DarkGreenPrimary, fontWeight = FontWeight.Bold)
-                        }
-
-                        Button(
-                            onClick = { showDevices = false },
-                            colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary)
-                        ) {
-                            Text("Done", color = CustomWhite)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     // --- Sub-Dialog Popup: Saved Credit / Debit Cards ---
     if (showCards) {
         var cardTemp by remember(showCards, user?.savedCards) { mutableStateOf(user?.savedCards ?: "") }
@@ -4800,6 +4967,8 @@ fun ProfileScreen(
     // --- Sub-Dialog Popup: Saved Addresses ---
     if (showAddresses) {
         var addrTemp by remember(showAddresses, user?.savedAddress) { mutableStateOf(user?.savedAddress ?: "") }
+        var addrLat by remember(showAddresses, user?.savedAddressLat) { mutableStateOf(user?.savedAddressLat ?: 0.0) }
+        var addrLng by remember(showAddresses, user?.savedAddressLng) { mutableStateOf(user?.savedAddressLng ?: 0.0) }
         Dialog(onDismissRequest = { showAddresses = false }) {
             Surface(
                 shape = RoundedCornerShape(16.dp),
@@ -4809,9 +4978,15 @@ fun ProfileScreen(
                 Column(modifier = Modifier.padding(24.dp)) {
                     Text("Registered Address Coordinates", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(16.dp))
-                    OutlinedTextField(
+                    AddressSuggestionField(
                         value = addrTemp,
                         onValueChange = { addrTemp = it },
+                        onAddressSelected = {
+                            addrTemp = it.address
+                            addrLat = it.latitude
+                            addrLng = it.longitude
+                        },
+                        label = "Saved Delivery Address",
                         modifier = Modifier.fillMaxWidth(),
                         maxLines = 3
                     )
@@ -4819,8 +4994,10 @@ fun ProfileScreen(
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                         TextButton(
                             onClick = {
-                                viewModel.updateAddress("")
+                                viewModel.updateAddress("", 0.0, 0.0)
                                 addrTemp = ""
+                                addrLat = 0.0
+                                addrLng = 0.0
                                 Toast.makeText(context, "Delivery address removed", Toast.LENGTH_SHORT).show()
                             },
                             enabled = addrTemp.isNotBlank()
@@ -4830,7 +5007,7 @@ fun ProfileScreen(
                         Spacer(modifier = Modifier.width(10.dp))
                         Button(
                             onClick = {
-                                viewModel.updateAddress(addrTemp)
+                                viewModel.updateAddress(addrTemp, addrLat, addrLng)
                                 showAddresses = false
                                 Toast.makeText(context, "Delivery Address Saved", Toast.LENGTH_SHORT).show()
                             },
@@ -4947,6 +5124,82 @@ fun ProfileScreen(
             }
         }
     }
+
+    if (showHelpCenter) {
+        Dialog(onDismissRequest = { showHelpCenter = false }) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = CustomWhite,
+                modifier = Modifier.shadow(8.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.SupportAgent, contentDescription = "", tint = DarkGreenPrimary)
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text("Help Center", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, color = RichBlack)
+                    }
+                    Text(
+                        text = "Contact ZYL VOR BAZAAR support directly.",
+                        fontSize = 12.sp,
+                        color = MutedText
+                    )
+                    Button(
+                        onClick = { openHelpWhatsApp(context) },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(Icons.Default.Chat, contentDescription = "", tint = CustomWhite, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("WhatsApp $HELP_DISPLAY_MOBILE", color = CustomWhite, fontWeight = FontWeight.Bold)
+                    }
+                    OutlinedButton(
+                        onClick = { openHelpEmail(context) },
+                        modifier = Modifier.fillMaxWidth(),
+                        border = BorderStroke(1.dp, DarkGreenPrimary),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = DarkGreenPrimary),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(Icons.Default.Email, contentDescription = "", modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(HELP_EMAIL, fontWeight = FontWeight.Bold)
+                    }
+                    TextButton(
+                        onClick = { showHelpCenter = false },
+                        modifier = Modifier.align(Alignment.End)
+                    ) {
+                        Text("Close", color = MutedText)
+                    }
+                }
+            }
+        }
+    }
+}
+
+fun openHelpWhatsApp(context: android.content.Context) {
+    val message = Uri.encode("Hello ZYL VOR BAZAAR support, I need help with my account/order.")
+    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/$HELP_WHATSAPP_NUMBER?text=$message"))
+    try {
+        context.startActivity(intent)
+    } catch (e: Exception) {
+        Toast.makeText(context, "WhatsApp is unavailable on this device", Toast.LENGTH_SHORT).show()
+    }
+}
+
+fun openHelpEmail(context: android.content.Context) {
+    val intent = Intent(Intent.ACTION_SENDTO).apply {
+        data = Uri.parse("mailto:$HELP_EMAIL")
+        putExtra(Intent.EXTRA_SUBJECT, "ZYL VOR BAZAAR Help Request")
+        putExtra(Intent.EXTRA_TEXT, "Hello ZYL VOR BAZAAR support,\n\nI need help with ")
+    }
+    try {
+        context.startActivity(intent)
+    } catch (e: Exception) {
+        Toast.makeText(context, "No email app found", Toast.LENGTH_SHORT).show()
+    }
 }
 
 // Utility to verify nullability checks for boolean structures
@@ -4966,6 +5219,7 @@ fun ProfileInteractiveRow(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 6.dp)
+            .animateContentSize(animationSpec = tween(220, easing = FastOutSlowInEasing))
             .clickable { onClick() },
         colors = CardDefaults.cardColors(containerColor = CustomWhite),
         border = BorderStroke(1.dp, SoftGrey),
@@ -5019,6 +5273,8 @@ fun DirectBuyCheckoutDialog(
     val user by viewModel.currentUser.collectAsState()
     var step by remember(product.id) { mutableStateOf(1) }
     var address by remember(product.id, user?.savedAddress) { mutableStateOf(user?.savedAddress ?: "") }
+    var addressLat by remember(product.id, user?.savedAddressLat) { mutableStateOf(user?.savedAddressLat ?: 0.0) }
+    var addressLng by remember(product.id, user?.savedAddressLng) { mutableStateOf(user?.savedAddressLng ?: 0.0) }
     var couponText by remember(product.id) { mutableStateOf("") }
     var couponApplied by remember(product.id) { mutableStateOf(false) }
     val orderId = remember(product.id) { "ZVB-" + java.util.UUID.randomUUID().toString().uppercase().take(8) }
@@ -5060,14 +5316,17 @@ fun DirectBuyCheckoutDialog(
                     1 -> {
                         Text("Confirm Delivery Address", fontWeight = FontWeight.Bold, color = RichBlack)
                         Spacer(modifier = Modifier.height(10.dp))
-                        OutlinedTextField(
+                        AddressSuggestionField(
                             value = address,
                             onValueChange = { address = it },
-                            label = { Text("Delivery Address") },
+                            onAddressSelected = {
+                                address = it.address
+                                addressLat = it.latitude
+                                addressLng = it.longitude
+                            },
+                            label = "Delivery Address",
                             modifier = Modifier.fillMaxWidth(),
-                            minLines = 2,
-                            maxLines = 3,
-                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = DarkGreenPrimary)
+                            maxLines = 3
                         )
                         Spacer(modifier = Modifier.height(16.dp))
                         Button(
@@ -5075,7 +5334,7 @@ fun DirectBuyCheckoutDialog(
                                 if (address.isBlank()) {
                                     Toast.makeText(context, "Address cannot be empty", Toast.LENGTH_SHORT).show()
                                 } else {
-                                    viewModel.updateAddress(address)
+                                    viewModel.updateAddress(address, addressLat, addressLng)
                                     step = 2
                                 }
                             },
@@ -5157,6 +5416,8 @@ fun DirectBuyCheckoutDialog(
                                         orderId = orderId,
                                         address = address,
                                         coupon = if (couponApplied) couponText else "",
+                                        addressLat = addressLat,
+                                        addressLng = addressLng,
                                         clearCartAfterCheckout = false
                                     )
                                 )
@@ -5233,6 +5494,8 @@ fun ProductDetailPane(
     var showCheckoutDialog by remember { mutableStateOf(false) }
     var checkoutStep by remember { mutableStateOf(1) } // 1: Delivery Address confirmation, 2: Secure Payment & Coupon, 3: Success info
     var tempAddress by remember { mutableStateOf(user?.savedAddress ?: "") }
+    var tempAddressLat by remember { mutableStateOf(user?.savedAddressLat ?: 0.0) }
+    var tempAddressLng by remember { mutableStateOf(user?.savedAddressLng ?: 0.0) }
     var tempCard by remember { mutableStateOf(user?.savedCards ?: "") }
     var directOrderId by remember { mutableStateOf("") }
     var directDeliveryDate by remember { mutableStateOf("") }
@@ -5274,6 +5537,8 @@ fun ProductDetailPane(
     LaunchedEffect(user) {
         if (tempAddress.isEmpty() && !user?.savedAddress.isNullOrEmpty()) {
             tempAddress = user!!.savedAddress
+            tempAddressLat = user!!.savedAddressLat
+            tempAddressLng = user!!.savedAddressLng
         }
         if (tempCard.isEmpty() && !user?.savedCards.isNullOrEmpty()) {
             tempCard = user!!.savedCards
@@ -5355,46 +5620,37 @@ fun ProductDetailPane(
                             }
                         }
                     } else {
-                        if (product.id == 1 && page == 0) {
-                            Image(
-                                painter = painterResource(id = R.drawable.img_hero_banner_1782139859933),
-                                contentDescription = product.name,
-                                modifier = Modifier.fillMaxSize(),
-                                contentScale = ContentScale.Crop
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            Icon(
+                                imageVector = when (page) {
+                                    0 -> when (product.category) {
+                                        "Electronics" -> Icons.Default.Devices
+                                        "Fresh Products" -> Icons.Default.LocalFlorist
+                                        "Fashion" -> Icons.Default.ShoppingBag
+                                        else -> Icons.Default.Kitchen
+                                    }
+                                    1 -> Icons.Default.Inventory
+                                    else -> Icons.Default.WorkspacePremium
+                                },
+                                contentDescription = "",
+                                tint = DarkGreenPrimary,
+                                modifier = Modifier.size(90.dp)
                             )
-                        } else {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center,
-                                modifier = Modifier.fillMaxSize()
-                            ) {
-                                Icon(
-                                    imageVector = when (page) {
-                                        0 -> when (product.category) {
-                                            "Electronics" -> Icons.Default.Devices
-                                            "Fresh Products" -> Icons.Default.LocalFlorist
-                                            "Fashion" -> Icons.Default.ShoppingBag
-                                            else -> Icons.Default.Kitchen
-                                        }
-                                        1 -> Icons.Default.Inventory
-                                        else -> Icons.Default.WorkspacePremium
-                                    },
-                                    contentDescription = "",
-                                    tint = DarkGreenPrimary,
-                                    modifier = Modifier.size(90.dp)
-                                )
-                                Spacer(modifier = Modifier.height(6.dp))
-                                Text(
-                                    text = when (page) {
-                                        0 -> "Primary Product View"
-                                        1 -> "Secure Boxed Packaging"
-                                        else -> "Quality Inspection Certified"
-                                    },
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MutedText
-                                )
-                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = when (page) {
+                                    0 -> "Primary Product View"
+                                    1 -> "Secure Boxed Packaging"
+                                    else -> "Quality Inspection Certified"
+                                },
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MutedText
+                            )
                         }
                     }
                 }
@@ -6001,22 +6257,24 @@ fun ProductDetailPane(
                             // Shipping details block
                             Text("Step 1: Confirm Delivery Address", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = RichBlack)
                             Spacer(modifier = Modifier.height(10.dp))
-                            OutlinedTextField(
+                            AddressSuggestionField(
                                 value = tempAddress,
                                 onValueChange = { tempAddress = it },
-                                label = { Text("Delivery Address String") },
+                                onAddressSelected = {
+                                    tempAddress = it.address
+                                    tempAddressLat = it.latitude
+                                    tempAddressLng = it.longitude
+                                },
+                                label = "Delivery Address",
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("checkout_address_input"),
-                                singleLine = false,
-                                maxLines = 3,
-                                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = DarkGreenPrimary)
+                                    .fillMaxWidth(),
+                                testTag = "checkout_address_input"
                             )
                             Spacer(modifier = Modifier.height(20.dp))
                             Button(
                                 onClick = {
                                     if (tempAddress.isNotBlank()) {
-                                        viewModel.updateAddress(tempAddress)
+                                        viewModel.updateAddress(tempAddress, tempAddressLat, tempAddressLng)
                                         checkoutStep = 2
                                     } else {
                                         Toast.makeText(context, "Address cannot be empty", Toast.LENGTH_SHORT).show()
@@ -6127,6 +6385,8 @@ fun ProductDetailPane(
                                                 orderId = directOrderId,
                                                 address = tempAddress,
                                                 coupon = if (isCouponApplied) couponText else "",
+                                                addressLat = tempAddressLat,
+                                                addressLng = tempAddressLng,
                                                 clearCartAfterCheckout = false
                                             )
                                         )
@@ -6370,6 +6630,8 @@ fun SellerPanelScreen(
     var editName by remember { mutableStateOf(currentUser?.name ?: "") }
     var editShopName by remember { mutableStateOf(currentUser?.shopName ?: "") }
     var editShopAddress by remember { mutableStateOf(currentUser?.shopAddress ?: "") }
+    var editShopAddressLat by remember { mutableStateOf(currentUser?.shopAddressLat ?: 0.0) }
+    var editShopAddressLng by remember { mutableStateOf(currentUser?.shopAddressLng ?: 0.0) }
 
     Scaffold(
         topBar = {
@@ -6448,8 +6710,9 @@ fun SellerPanelScreen(
                     // Compute metrics
                     val isVerified = currentUser?.isSellerVerified == true
                     
-                    val sellerProductsForCurrentSeller = allProducts.filter { 
-                        it.sellerEmail.equals(currentUser?.email, ignoreCase = true) || it.sellerEmail.isBlank() 
+                    val sellerEmail = currentUser?.email.orEmpty()
+                    val sellerProductsForCurrentSeller = allProducts.filter {
+                        sellerEmail.isNotBlank() && it.sellerEmail.equals(sellerEmail, ignoreCase = true)
                     }
                     val sellerProductNames = sellerProductsForCurrentSeller.map { it.name }
                     
@@ -6990,8 +7253,9 @@ fun SellerPanelScreen(
 
                 SellerTab.Products -> {
                     // Filter products owned by this seller
-                    val sellerProducts = allProducts.filter { 
-                        it.sellerEmail == currentUser?.email || it.sellerEmail.isBlank() 
+                    val sellerEmail = currentUser?.email.orEmpty()
+                    val sellerProducts = allProducts.filter {
+                        sellerEmail.isNotBlank() && it.sellerEmail.equals(sellerEmail, ignoreCase = true)
                     }
 
                     Scaffold(
@@ -7060,6 +7324,7 @@ fun SellerPanelScreen(
                                 }
                             } else {
                                 items(sellerProducts) { prod ->
+                                    val sellerProductPhoto = prod.primaryPhotoUrl()
                                     Card(
                                         modifier = Modifier.fillMaxWidth(),
                                         colors = CardDefaults.cardColors(containerColor = CustomWhite)
@@ -7072,10 +7337,22 @@ fun SellerPanelScreen(
                                             Box(
                                                 modifier = Modifier
                                                     .size(64.dp)
+                                                    .clip(RoundedCornerShape(8.dp))
                                                     .background(LightGreenSecondary.copy(alpha = 0.5f), shape = RoundedCornerShape(8.dp)),
                                                 contentAlignment = Alignment.Center
                                             ) {
-                                                Icon(Icons.Default.Inventory2, contentDescription = "", tint = DarkGreenPrimary, modifier = Modifier.size(28.dp))
+                                                if (sellerProductPhoto.isNotBlank()) {
+                                                    AsyncImage(
+                                                        model = sellerProductPhoto,
+                                                        contentDescription = prod.name,
+                                                        modifier = Modifier.fillMaxSize(),
+                                                        contentScale = ContentScale.Crop,
+                                                        placeholder = painterResource(id = R.drawable.img_hero_banner_1782139859933),
+                                                        error = painterResource(id = R.drawable.img_hero_banner_1782139859933)
+                                                    )
+                                                } else {
+                                                    Icon(Icons.Default.Inventory2, contentDescription = "", tint = DarkGreenPrimary, modifier = Modifier.size(28.dp))
+                                                }
                                             }
 
                                             Spacer(modifier = Modifier.width(14.dp))
@@ -7100,8 +7377,9 @@ fun SellerPanelScreen(
 
                 SellerTab.Profile -> {
                     val isVerified = currentUser?.isSellerVerified == true
-                    val sellerProductsForCurrentSeller = allProducts.filter { 
-                        it.sellerEmail.equals(currentUser?.email, ignoreCase = true) || it.sellerEmail.isBlank() 
+                    val sellerEmail = currentUser?.email.orEmpty()
+                    val sellerProductsForCurrentSeller = allProducts.filter {
+                        sellerEmail.isNotBlank() && it.sellerEmail.equals(sellerEmail, ignoreCase = true)
                     }
                     val sellerProductNames = sellerProductsForCurrentSeller.map { it.name }
                     val sellerOrders = if (isVerified) {
@@ -7256,12 +7534,17 @@ fun SellerPanelScreen(
 
                                 Spacer(modifier = Modifier.height(10.dp))
 
-                                OutlinedTextField(
+                                AddressSuggestionField(
                                     value = editShopAddress,
                                     onValueChange = { editShopAddress = it },
-                                    label = { Text("New Shop Address") },
-                                    modifier = Modifier.fillMaxWidth().testTag("profile_edit_shopaddress"),
-                                    singleLine = false,
+                                    onAddressSelected = {
+                                        editShopAddress = it.address
+                                        editShopAddressLat = it.latitude
+                                        editShopAddressLng = it.longitude
+                                    },
+                                    label = "New Shop Address",
+                                    modifier = Modifier.fillMaxWidth(),
+                                    testTag = "profile_edit_shopaddress",
                                     maxLines = 2
                                 )
 
@@ -7270,7 +7553,13 @@ fun SellerPanelScreen(
                                 Button(
                                     onClick = {
                                         if (editShopName.isNotBlank() && editName.isNotBlank() && editShopAddress.isNotBlank()) {
-                                            viewModel.applyShopEditRequest(editName, editShopName, editShopAddress)
+                                            viewModel.applyShopEditRequest(
+                                                editName,
+                                                editShopName,
+                                                editShopAddress,
+                                                editShopAddressLat,
+                                                editShopAddressLng
+                                            )
                                             Toast.makeText(context, "Edit request submitted securely to Room database!", Toast.LENGTH_SHORT).show()
                                         } else {
                                             Toast.makeText(context, "Please enter all fields.", Toast.LENGTH_SHORT).show()
@@ -7485,15 +7774,9 @@ fun SellerPanelScreen(
                         onClick = {
                             val price = newProdPrice.toDoubleOrNull()
                             val origPrice = newProdOrigPrice.toDoubleOrNull()
-                            // Fallback image if they uploaded nothing
-                            val finalImages = if (imageList.isEmpty()) {
-                                listOf("https://images.unsplash.com/photo-1542838132-92c53300491e")
-                            } else {
-                                imageList
-                            }
-                            val extraImagesStr = finalImages.joinToString(",")
+                            val extraImagesStr = imageList.joinToString(",")
 
-                            if (newProdName.isNotBlank() && price != null && origPrice != null && newProdCat.isNotBlank()) {
+                            if (newProdName.isNotBlank() && price != null && origPrice != null && newProdCat.isNotBlank() && imageList.isNotEmpty()) {
                                 viewModel.addProduct(
                                     newProdName,
                                     price,
@@ -7511,6 +7794,8 @@ fun SellerPanelScreen(
                                 newProdDesc = ""
                                 imageList = emptyList()
                                 Toast.makeText(context, "Product listed successfully on the Bazaar!", Toast.LENGTH_SHORT).show()
+                            } else if (imageList.isEmpty()) {
+                                Toast.makeText(context, "Please upload at least one product photo.", Toast.LENGTH_SHORT).show()
                             } else {
                                 Toast.makeText(context, "Please enter valid entries and prices.", Toast.LENGTH_SHORT).show()
                             }

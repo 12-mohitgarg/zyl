@@ -47,6 +47,8 @@ fun User.toMap(): Map<String, Any> {
         "password" to password,
         "isPlusMember" to isPlusMember,
         "savedAddress" to savedAddress,
+        "savedAddressLat" to savedAddressLat,
+        "savedAddressLng" to savedAddressLng,
         "savedCards" to savedCards,
         "deviceCount" to deviceCount,
         "notificationsEnabled" to notificationsEnabled,
@@ -57,10 +59,14 @@ fun User.toMap(): Map<String, Any> {
         "role" to role,
         "shopName" to shopName,
         "shopAddress" to shopAddress,
+        "shopAddressLat" to shopAddressLat,
+        "shopAddressLng" to shopAddressLng,
         "editRequestPending" to editRequestPending,
         "requestedName" to requestedName,
         "requestedShopName" to requestedShopName,
         "requestedShopAddress" to requestedShopAddress,
+        "requestedShopAddressLat" to requestedShopAddressLat,
+        "requestedShopAddressLng" to requestedShopAddressLng,
         "isSellerVerified" to isSellerVerified,
         "isSellerVerificationPending" to isSellerVerificationPending,
         "sellerMobile" to sellerMobile,
@@ -76,6 +82,8 @@ fun User.toMap(): Map<String, Any> {
         "deliveryAadhaar" to deliveryAadhaar,
         "deliveryPhoto" to deliveryPhoto,
         "deliveryAddress" to deliveryAddress,
+        "deliveryAddressLat" to deliveryAddressLat,
+        "deliveryAddressLng" to deliveryAddressLng,
         "deliveryBankAccount" to deliveryBankAccount,
         "deliveryEmergencyContact" to deliveryEmergencyContact,
         "deliveryVehicleType" to deliveryVehicleType,
@@ -91,6 +99,8 @@ fun Map<String, Any?>.toUser(): User {
         password = this["password"] as? String ?: "",
         isPlusMember = this["isPlusMember"] as? Boolean ?: false,
         savedAddress = this["savedAddress"] as? String ?: "",
+        savedAddressLat = (this["savedAddressLat"] as? Number)?.toDouble() ?: 0.0,
+        savedAddressLng = (this["savedAddressLng"] as? Number)?.toDouble() ?: 0.0,
         savedCards = this["savedCards"] as? String ?: "",
         deviceCount = (this["deviceCount"] as? Number)?.toInt() ?: 1,
         notificationsEnabled = this["notificationsEnabled"] as? Boolean ?: true,
@@ -101,10 +111,14 @@ fun Map<String, Any?>.toUser(): User {
         role = this["role"] as? String ?: "User",
         shopName = this["shopName"] as? String ?: "",
         shopAddress = this["shopAddress"] as? String ?: "",
+        shopAddressLat = (this["shopAddressLat"] as? Number)?.toDouble() ?: 0.0,
+        shopAddressLng = (this["shopAddressLng"] as? Number)?.toDouble() ?: 0.0,
         editRequestPending = this["editRequestPending"] as? Boolean ?: false,
         requestedName = this["requestedName"] as? String ?: "",
         requestedShopName = this["requestedShopName"] as? String ?: "",
         requestedShopAddress = this["requestedShopAddress"] as? String ?: "",
+        requestedShopAddressLat = (this["requestedShopAddressLat"] as? Number)?.toDouble() ?: 0.0,
+        requestedShopAddressLng = (this["requestedShopAddressLng"] as? Number)?.toDouble() ?: 0.0,
         isSellerVerified = this["isSellerVerified"] as? Boolean ?: false,
         isSellerVerificationPending = this["isSellerVerificationPending"] as? Boolean ?: false,
         sellerMobile = this["sellerMobile"] as? String ?: "",
@@ -120,6 +134,8 @@ fun Map<String, Any?>.toUser(): User {
         deliveryAadhaar = this["deliveryAadhaar"] as? String ?: "",
         deliveryPhoto = this["deliveryPhoto"] as? String ?: "",
         deliveryAddress = this["deliveryAddress"] as? String ?: "",
+        deliveryAddressLat = (this["deliveryAddressLat"] as? Number)?.toDouble() ?: 0.0,
+        deliveryAddressLng = (this["deliveryAddressLng"] as? Number)?.toDouble() ?: 0.0,
         deliveryBankAccount = this["deliveryBankAccount"] as? String ?: "",
         deliveryEmergencyContact = this["deliveryEmergencyContact"] as? String ?: "",
         deliveryVehicleType = this["deliveryVehicleType"] as? String ?: "",
@@ -169,6 +185,8 @@ fun Order.toMap(): Map<String, Any> {
         "status" to status,
         "itemsSummary" to itemsSummary,
         "deliveryAddress" to deliveryAddress,
+        "deliveryAddressLat" to deliveryAddressLat,
+        "deliveryAddressLng" to deliveryAddressLng,
         "couponApplied" to couponApplied,
         
         "deliveryPartnerEmail" to deliveryPartnerEmail,
@@ -189,6 +207,8 @@ fun Map<String, Any?>.toOrder(): Order {
         status = this["status"] as? String ?: "",
         itemsSummary = this["itemsSummary"] as? String ?: "",
         deliveryAddress = this["deliveryAddress"] as? String ?: "",
+        deliveryAddressLat = (this["deliveryAddressLat"] as? Number)?.toDouble() ?: 0.0,
+        deliveryAddressLng = (this["deliveryAddressLng"] as? Number)?.toDouble() ?: 0.0,
         couponApplied = this["couponApplied"] as? String ?: "",
         
         deliveryPartnerEmail = this["deliveryPartnerEmail"] as? String ?: "",
@@ -206,6 +226,8 @@ data class PendingCheckout(
     val orderId: String,
     val address: String,
     val coupon: String,
+    val addressLat: Double = 0.0,
+    val addressLng: Double = 0.0,
     val clearCartAfterCheckout: Boolean = true
 )
 
@@ -762,6 +784,8 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
         role: String = "User",
         shopName: String = "",
         shopAddress: String = "",
+        shopAddressLat: Double = 0.0,
+        shopAddressLng: Double = 0.0,
         sellerMobile: String = "",
         sellerAadhaar: String = "",
         sellerShopPhoto: String = "",
@@ -775,6 +799,8 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
         deliveryAadhaar: String = "",
         deliveryPhoto: String = "",
         deliveryAddress: String = "",
+        deliveryAddressLat: Double = 0.0,
+        deliveryAddressLng: Double = 0.0,
         deliveryBankAccount: String = "",
         deliveryEmergencyContact: String = "",
         deliveryVehicleType: String = "",
@@ -796,10 +822,14 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
                 name = name,
                 password = pword,
                 savedAddress = if (role == "Seller") shopAddress else if (role == "DeliveryPartner") deliveryAddress else "ffff123 Green Bazaar Lane, Eco City, 54002",
+                savedAddressLat = if (role == "Seller") shopAddressLat else if (role == "DeliveryPartner") deliveryAddressLat else 0.0,
+                savedAddressLng = if (role == "Seller") shopAddressLng else if (role == "DeliveryPartner") deliveryAddressLng else 0.0,
                 savedCards = "*4242 (Visa Classic)",
                 role = role,
                 shopName = shopName,
                 shopAddress = shopAddress,
+                shopAddressLat = shopAddressLat,
+                shopAddressLng = shopAddressLng,
                 isSellerVerified = false,
                 isSellerVerificationPending = if (role == "Seller") true else false,
                 sellerMobile = sellerMobile,
@@ -814,6 +844,8 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
                 deliveryAadhaar = deliveryAadhaar,
                 deliveryPhoto = deliveryPhoto,
                 deliveryAddress = deliveryAddress,
+                deliveryAddressLat = deliveryAddressLat,
+                deliveryAddressLng = deliveryAddressLng,
                 deliveryBankAccount = deliveryBankAccount,
                 deliveryEmergencyContact = deliveryEmergencyContact,
                 deliveryVehicleType = deliveryVehicleType,
@@ -918,9 +950,13 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
         saveUser(updated)
     }
 
-    fun updateAddress(address: String) {
+    fun updateAddress(address: String, latitude: Double = 0.0, longitude: Double = 0.0) {
         val current = _currentUser.value ?: return
-        val updated = current.copy(savedAddress = address.trim())
+        val updated = current.copy(
+            savedAddress = address.trim(),
+            savedAddressLat = latitude,
+            savedAddressLng = longitude
+        )
         saveUser(updated)
     }
 
@@ -975,7 +1011,9 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
         vehicleType: String,
         vehicleNumber: String,
         emergencyContact: String,
-        address: String
+        address: String,
+        addressLat: Double = 0.0,
+        addressLng: Double = 0.0
     ) {
         val current = _currentUser.value ?: return
         val updated = current.copy(
@@ -984,7 +1022,9 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
             deliveryVehicleType = vehicleType,
             deliveryVehicleNumber = vehicleNumber,
             deliveryEmergencyContact = emergencyContact,
-            deliveryAddress = address
+            deliveryAddress = address,
+            deliveryAddressLat = addressLat,
+            deliveryAddressLng = addressLng
         )
         saveUser(updated)
     }
@@ -1048,6 +1088,8 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
         customOrderId: String = "",
         deliveryAddress: String = "",
         couponApplied: String = "",
+        deliveryAddressLat: Double = 0.0,
+        deliveryAddressLng: Double = 0.0,
         clearCartAfterCheckout: Boolean = true
     ) {
         val user = _currentUser.value ?: return
@@ -1061,6 +1103,8 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
                 status = "Processing",
                 itemsSummary = summary,
                 deliveryAddress = deliveryAddress,
+                deliveryAddressLat = deliveryAddressLat,
+                deliveryAddressLng = deliveryAddressLng,
                 couponApplied = couponApplied
             )
             repository.insertOrder(newOrder)
@@ -1135,13 +1179,21 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun applyShopEditRequest(requestedName: String, requestedShopName: String, requestedShopAddress: String) {
+    fun applyShopEditRequest(
+        requestedName: String,
+        requestedShopName: String,
+        requestedShopAddress: String,
+        requestedShopAddressLat: Double = 0.0,
+        requestedShopAddressLng: Double = 0.0
+    ) {
         val current = _currentUser.value ?: return
         val updated = current.copy(
             editRequestPending = true,
             requestedName = requestedName,
             requestedShopName = requestedShopName,
-            requestedShopAddress = requestedShopAddress
+            requestedShopAddress = requestedShopAddress,
+            requestedShopAddressLat = requestedShopAddressLat,
+            requestedShopAddressLng = requestedShopAddressLng
         )
         saveUser(updated)
     }
@@ -1154,10 +1206,14 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
                     name = user.requestedName.ifBlank { user.name },
                     shopName = user.requestedShopName.ifBlank { user.shopName },
                     shopAddress = user.requestedShopAddress.ifBlank { user.shopAddress },
+                    shopAddressLat = if (user.requestedShopAddress.isNotBlank()) user.requestedShopAddressLat else user.shopAddressLat,
+                    shopAddressLng = if (user.requestedShopAddress.isNotBlank()) user.requestedShopAddressLng else user.shopAddressLng,
                     editRequestPending = false,
                     requestedName = "",
                     requestedShopName = "",
-                    requestedShopAddress = ""
+                    requestedShopAddress = "",
+                    requestedShopAddressLat = 0.0,
+                    requestedShopAddressLng = 0.0
                 )
                 saveUser(updated)
             }
