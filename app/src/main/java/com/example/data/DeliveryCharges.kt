@@ -36,13 +36,22 @@ fun isAddressInServiceArea(address: String, config: AppConfig): Boolean {
     if (normalized.isBlank()) return false
     val cities = config.serviceCities.map { it.trim().lowercase() }.filter { it.isNotBlank() }
     val pincodes = config.servicePincodes.map { it.filter(Char::isDigit) }.filter { it.isNotBlank() }
+    
+    // If both are empty, service is available everywhere
     if (cities.isEmpty() && pincodes.isEmpty()) return true
-    val cityMatch = cities.isEmpty() || cities.any { city ->
+    
+    // Extract pincodes (5 or 6 digits) from the address
+    val addressPincodes = Regex("""\b\d{5,6}\b""").findAll(normalized).map { it.value }.toSet()
+    
+    // If pincodes are configured, we strictly enforce pincode matching
+    if (pincodes.isNotEmpty()) {
+        return addressPincodes.any { it in pincodes }
+    }
+    
+    // Fall back to city name matching if no pincodes are configured
+    return cities.any { city ->
         Regex("""(^|[^a-z0-9])${Regex.escape(city)}([^a-z0-9]|$)""").containsMatchIn(normalized)
     }
-    val addressPincodes = Regex("""\b\d{5,6}\b""").findAll(normalized).map { it.value }.toSet()
-    val pincodeMatch = pincodes.isEmpty() || addressPincodes.any { it in pincodes }
-    return cityMatch && pincodeMatch
 }
 
 fun isPincodeInServiceArea(pincode: String, config: AppConfig): Boolean {

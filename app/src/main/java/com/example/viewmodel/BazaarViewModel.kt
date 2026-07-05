@@ -67,6 +67,13 @@ fun User.toMap(): Map<String, Any> {
         "requestedShopAddress" to requestedShopAddress,
         "requestedShopAddressLat" to requestedShopAddressLat,
         "requestedShopAddressLng" to requestedShopAddressLng,
+        "requestedDeliveryMobile" to requestedDeliveryMobile,
+        "requestedDeliveryVehicleType" to requestedDeliveryVehicleType,
+        "requestedDeliveryVehicleNumber" to requestedDeliveryVehicleNumber,
+        "requestedDeliveryEmergencyContact" to requestedDeliveryEmergencyContact,
+        "requestedDeliveryAddress" to requestedDeliveryAddress,
+        "requestedDeliveryAddressLat" to requestedDeliveryAddressLat,
+        "requestedDeliveryAddressLng" to requestedDeliveryAddressLng,
         "isSellerVerified" to isSellerVerified,
         "isSellerVerificationPending" to isSellerVerificationPending,
         "sellerMobile" to sellerMobile,
@@ -76,6 +83,7 @@ fun User.toMap(): Map<String, Any> {
         "sellerBankAccount" to sellerBankAccount,
         "sellerPanCard" to sellerPanCard,
         "sellerGstNumber" to sellerGstNumber,
+        "sellerVideoUrl" to sellerVideoUrl,
         
         // --- Delivery Partner Mapping ---
         "deliveryMobile" to deliveryMobile,
@@ -119,6 +127,13 @@ fun Map<String, Any?>.toUser(): User {
         requestedShopAddress = this["requestedShopAddress"] as? String ?: "",
         requestedShopAddressLat = (this["requestedShopAddressLat"] as? Number)?.toDouble() ?: 0.0,
         requestedShopAddressLng = (this["requestedShopAddressLng"] as? Number)?.toDouble() ?: 0.0,
+        requestedDeliveryMobile = this["requestedDeliveryMobile"] as? String ?: "",
+        requestedDeliveryVehicleType = this["requestedDeliveryVehicleType"] as? String ?: "",
+        requestedDeliveryVehicleNumber = this["requestedDeliveryVehicleNumber"] as? String ?: "",
+        requestedDeliveryEmergencyContact = this["requestedDeliveryEmergencyContact"] as? String ?: "",
+        requestedDeliveryAddress = this["requestedDeliveryAddress"] as? String ?: "",
+        requestedDeliveryAddressLat = (this["requestedDeliveryAddressLat"] as? Number)?.toDouble() ?: 0.0,
+        requestedDeliveryAddressLng = (this["requestedDeliveryAddressLng"] as? Number)?.toDouble() ?: 0.0,
         isSellerVerified = this["isSellerVerified"] as? Boolean ?: false,
         isSellerVerificationPending = this["isSellerVerificationPending"] as? Boolean ?: false,
         sellerMobile = this["sellerMobile"] as? String ?: "",
@@ -128,6 +143,7 @@ fun Map<String, Any?>.toUser(): User {
         sellerBankAccount = this["sellerBankAccount"] as? String ?: "",
         sellerPanCard = this["sellerPanCard"] as? String ?: "",
         sellerGstNumber = this["sellerGstNumber"] as? String ?: "",
+        sellerVideoUrl = this["sellerVideoUrl"] as? String ?: "",
         
         // --- Delivery Partner Mapping ---
         deliveryMobile = this["deliveryMobile"] as? String ?: "",
@@ -812,6 +828,7 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
         sellerBankAccount: String = "",
         sellerPanCard: String = "",
         sellerGstNumber: String = "",
+        sellerVideoUrl: String = "",
         
         // --- Delivery Partner optional params ---
         deliveryMobile: String = "",
@@ -858,6 +875,7 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
                 sellerBankAccount = sellerBankAccount,
                 sellerPanCard = sellerPanCard,
                 sellerGstNumber = sellerGstNumber,
+                sellerVideoUrl = sellerVideoUrl,
                 
                 deliveryMobile = deliveryMobile,
                 deliveryAadhaar = deliveryAadhaar,
@@ -1025,14 +1043,15 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
     ) {
         val current = _currentUser.value ?: return
         val updated = current.copy(
-            name = name,
-            deliveryMobile = phone,
-            deliveryVehicleType = vehicleType,
-            deliveryVehicleNumber = vehicleNumber,
-            deliveryEmergencyContact = emergencyContact,
-            deliveryAddress = address,
-            deliveryAddressLat = addressLat,
-            deliveryAddressLng = addressLng
+            editRequestPending = true,
+            requestedName = name,
+            requestedDeliveryMobile = phone,
+            requestedDeliveryVehicleType = vehicleType,
+            requestedDeliveryVehicleNumber = vehicleNumber,
+            requestedDeliveryEmergencyContact = emergencyContact,
+            requestedDeliveryAddress = address,
+            requestedDeliveryAddressLat = addressLat,
+            requestedDeliveryAddressLng = addressLng
         )
         saveUser(updated)
     }
@@ -1284,12 +1303,28 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
                     shopAddress = user.requestedShopAddress.ifBlank { user.shopAddress },
                     shopAddressLat = if (user.requestedShopAddress.isNotBlank()) user.requestedShopAddressLat else user.shopAddressLat,
                     shopAddressLng = if (user.requestedShopAddress.isNotBlank()) user.requestedShopAddressLng else user.shopAddressLng,
+                    
+                    deliveryMobile = user.requestedDeliveryMobile.ifBlank { user.deliveryMobile },
+                    deliveryVehicleType = user.requestedDeliveryVehicleType.ifBlank { user.deliveryVehicleType },
+                    deliveryVehicleNumber = user.requestedDeliveryVehicleNumber.ifBlank { user.deliveryVehicleNumber },
+                    deliveryEmergencyContact = user.requestedDeliveryEmergencyContact.ifBlank { user.deliveryEmergencyContact },
+                    deliveryAddress = user.requestedDeliveryAddress.ifBlank { user.deliveryAddress },
+                    deliveryAddressLat = if (user.requestedDeliveryAddress.isNotBlank()) user.requestedDeliveryAddressLat else user.deliveryAddressLat,
+                    deliveryAddressLng = if (user.requestedDeliveryAddress.isNotBlank()) user.requestedDeliveryAddressLng else user.deliveryAddressLng,
+                    
                     editRequestPending = false,
                     requestedName = "",
                     requestedShopName = "",
                     requestedShopAddress = "",
                     requestedShopAddressLat = 0.0,
-                    requestedShopAddressLng = 0.0
+                    requestedShopAddressLng = 0.0,
+                    requestedDeliveryMobile = "",
+                    requestedDeliveryVehicleType = "",
+                    requestedDeliveryVehicleNumber = "",
+                    requestedDeliveryEmergencyContact = "",
+                    requestedDeliveryAddress = "",
+                    requestedDeliveryAddressLat = 0.0,
+                    requestedDeliveryAddressLng = 0.0
                 )
                 saveUser(updated)
             }
@@ -1456,6 +1491,29 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    private fun saveImageLocally(uri: Uri, imageId: String): String {
+        return try {
+            val app = getApplication<Application>()
+            val resolver = app.contentResolver
+            val mimeType = resolver.getType(uri) ?: "image/jpeg"
+            val extension = MimeTypeMap.getSingleton().getExtensionFromMimeType(mimeType) ?: "jpg"
+            val directory = java.io.File(app.filesDir, "product_images")
+            if (!directory.exists()) {
+                directory.mkdirs()
+            }
+            val file = java.io.File(directory, "prod_$imageId.$extension")
+            resolver.openInputStream(uri)?.use { input ->
+                file.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+            Uri.fromFile(file).toString()
+        } catch (e: Exception) {
+            e.printStackTrace()
+            uri.toString()
+        }
+    }
+
     fun uploadProductImageToCloudinary(
         uri: Uri,
         sellerEmail: String,
@@ -1539,7 +1597,112 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
                 onSuccess(downloadUrl)
             } catch (e: Exception) {
                 e.printStackTrace()
-                onSuccess(uri.toString())
+                val errorMsg = e.message ?: "Unknown upload error"
+                onError("Cloud upload failed: $errorMsg. Image saved locally for preview.")
+                val localPath = saveImageLocally(uri, imageId)
+                onSuccess(localPath)
+            }
+        }
+    }
+
+    fun uploadVideoToCloudinary(
+        uri: Uri,
+        sellerEmail: String,
+        onError: (String) -> Unit = {},
+        onSuccess: (String) -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                val app = getApplication<Application>()
+                val retriever = android.media.MediaMetadataRetriever()
+                try {
+                    retriever.setDataSource(app, uri)
+                    val time = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)
+                    val durationMs = time?.toLongOrNull() ?: 0L
+                    if (durationMs > 60000L) {
+                        onError("Video must be less than 1 minute.")
+                        return@launch
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                } finally {
+                    try { retriever.release() } catch(ex: Exception) {}
+                }
+
+                val cloudName = BuildConfig.CLOUDINARY_CLOUD_NAME
+                val uploadPreset = BuildConfig.CLOUDINARY_UPLOAD_PRESET
+                val folder = BuildConfig.CLOUDINARY_FOLDER
+
+                val downloadUrl = withContext(Dispatchers.IO) {
+                    val resolver = app.contentResolver
+                    val mimeType = resolver.getType(uri) ?: "video/mp4"
+                    val extension = android.webkit.MimeTypeMap.getSingleton().getExtensionFromMimeType(mimeType) ?: "mp4"
+                    val safeSeller = sellerEmail.ifBlank { "unknown" }.replace(Regex("[^A-Za-z0-9_-]"), "_")
+                    val publicId = "${safeSeller}_video_${System.currentTimeMillis()}"
+                    val bytes = resolver.openInputStream(uri)?.use { it.readBytes() }
+                        ?: throw IllegalStateException("Unable to read selected video file.")
+
+                    suspend fun uploadToFirebase(): String {
+                        val storagePath = "seller_videos/$safeSeller/video_${System.currentTimeMillis()}.$extension"
+                        val storageRef = com.google.firebase.storage.FirebaseStorage.getInstance().reference.child(storagePath)
+                        storageRef.putBytes(bytes).awaitTask()
+                        return storageRef.downloadUrl.awaitTask().toString()
+                    }
+
+                    fun isConfigured(value: String): Boolean {
+                        val normalized = value.trim()
+                        return normalized.isNotBlank() &&
+                            !normalized.startsWith("your_", ignoreCase = true) &&
+                            !normalized.contains("_here", ignoreCase = true)
+                    }
+
+                    if (!isConfigured(cloudName) || !isConfigured(uploadPreset)) {
+                        return@withContext uploadToFirebase()
+                    }
+
+                    try {
+                        val fileBody = bytes.toRequestBody(mimeType.toMediaTypeOrNull())
+                        val multipart = okhttp3.MultipartBody.Builder()
+                            .setType(okhttp3.MultipartBody.FORM)
+                            .addFormDataPart("file", "video_${System.currentTimeMillis()}.$extension", fileBody)
+                            .addFormDataPart("upload_preset", uploadPreset)
+                            .addFormDataPart("public_id", publicId)
+                            .apply {
+                                if (isConfigured(folder)) addFormDataPart("folder", folder)
+                            }
+                            .build()
+
+                        val request = okhttp3.Request.Builder()
+                            .url("https://api.cloudinary.com/v1_1/$cloudName/video/upload")
+                            .post(multipart)
+                            .build()
+
+                        okhttp3.OkHttpClient().newCall(request).execute().use { response ->
+                            val raw = response.body?.string().orEmpty()
+                            if (!response.isSuccessful) {
+                                throw IllegalStateException("Cloudinary video upload failed: $raw")
+                            }
+                            org.json.JSONObject(raw).optString("secure_url").ifBlank {
+                                org.json.JSONObject(raw).optString("url")
+                            }.ifBlank {
+                                throw IllegalStateException("Cloudinary did not return a video URL.")
+                            }
+                        }
+                    } catch (cloudinaryError: Exception) {
+                        try {
+                            uploadToFirebase()
+                        } catch (firebaseError: Exception) {
+                            throw IllegalStateException(
+                                "Video upload failed. Cloudinary: ${cloudinaryError.message}. Firebase: ${firebaseError.message}"
+                            )
+                        }
+                    }
+                }
+
+                onSuccess(downloadUrl)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                onError(e.message ?: "Unknown video upload error")
             }
         }
     }

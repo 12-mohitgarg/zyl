@@ -43,6 +43,13 @@ fun DeliveryPartnerPanelScreen(viewModel: BazaarViewModel, onLogout: () -> Unit)
     val allUsers by viewModel.allUsers.collectAsState()
     val appConfig by viewModel.appConfig.collectAsState()
 
+    val sharedPrefs = remember(currentUser?.email) {
+        context.getSharedPreferences("delivery_prefs_${currentUser?.email ?: ""}", android.content.Context.MODE_PRIVATE)
+    }
+    var declinedOrders by remember(currentUser?.email) {
+        mutableStateOf(sharedPrefs.getStringSet("declined_orders", emptySet()) ?: emptySet())
+    }
+
     var activeTab by remember { mutableStateOf("Dashboard") } // "Dashboard", "Order Requests", "Active Orders"
 
     // Filter orders specifically for this delivery boy
@@ -64,7 +71,9 @@ fun DeliveryPartnerPanelScreen(viewModel: BazaarViewModel, onLogout: () -> Unit)
         (it.status == "Shipping Ready" || it.status == "Ready for Delivery" || it.status == "Accepted" || it.sellerConfirmed) &&
         (System.currentTimeMillis() - it.orderDate) <= 24 * 60 * 60 * 1000
     }
-    val availableRequests = candidateRequests.filter { isAddressInServiceArea(it.deliveryAddress, appConfig) }
+    val availableRequests = candidateRequests.filter { 
+        isAddressInServiceArea(it.deliveryAddress, appConfig) && !declinedOrders.contains(it.orderId) 
+    }
     val hasOutOfAreaRequests = candidateRequests.size > availableRequests.size
 
     // Active accepted orders
@@ -368,7 +377,27 @@ fun DeliveryPartnerPanelScreen(viewModel: BazaarViewModel, onLogout: () -> Unit)
                     }
 
                     "Order Requests" -> {
-                        if (availableRequests.isEmpty()) {
+                        if (currentUser?.isDeliveryPartnerVerified != true) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(24.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Icon(Icons.Default.PendingActions, contentDescription = "", tint = AccentRed, modifier = Modifier.size(48.dp))
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        "Verification Pending",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp,
+                                        color = AccentRed,
+                                        textAlign = TextAlign.Center
+                                    )
+                                    Text("Your delivery partner account is pending admin verification. Once verified, you will be able to receive and accept order deliveries here.", fontSize = 11.sp, color = MutedText, textAlign = TextAlign.Center)
+                                }
+                            }
+                        } else if (availableRequests.isEmpty()) {
                             Box(
                                 modifier = Modifier
                                     .fillMaxSize()
@@ -405,11 +434,17 @@ fun DeliveryPartnerPanelScreen(viewModel: BazaarViewModel, onLogout: () -> Unit)
                                         customer = customer,
                                         seller = seller,
                                         onAccept = {
-                                            viewModel.acceptOrder(order.orderId, currentUser?.email ?: "")
-                                            Toast.makeText(context, "Order accepted successfully!", Toast.LENGTH_SHORT).show()
+                                            if (currentUser?.isDeliveryPartnerVerified == true) {
+                                                viewModel.acceptOrder(order.orderId, currentUser?.email ?: "")
+                                                Toast.makeText(context, "Order accepted successfully!", Toast.LENGTH_SHORT).show()
+                                            } else {
+                                                Toast.makeText(context, "Your account is not verified.", Toast.LENGTH_SHORT).show()
+                                            }
                                         },
                                         onReject = {
-                                            viewModel.rejectOrderRequestByDeliveryPartner(order.orderId)
+                                            val newDeclined = declinedOrders + order.orderId
+                                            sharedPrefs.edit().putStringSet("declined_orders", newDeclined).apply()
+                                            declinedOrders = newDeclined
                                             Toast.makeText(context, "Order request declined.", Toast.LENGTH_SHORT).show()
                                         }
                                     )
@@ -823,6 +858,25 @@ fun DeliveryPartnerPanelScreen(viewModel: BazaarViewModel, onLogout: () -> Unit)
                                         }
                                     }
 
+                                }
+                            }
+
+                            if (currentUser?.editRequestPending == true) {
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(containerColor = LightGreenSecondary.copy(alpha = 0.2f)),
+                                    border = BorderStroke(1.dp, LightGreenSecondary),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Column(modifier = Modifier.padding(14.dp)) {
+                                        Text("⏳ Profile Update Pending Approval", fontWeight = FontWeight.Bold, color = DarkGreenPrimary, fontSize = 12.sp)
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text("Requested Name: ${currentUser?.requestedName}", fontSize = 11.sp, color = RichBlack)
+                                        Text("Requested Mobile: ${currentUser?.requestedDeliveryMobile}", fontSize = 11.sp, color = RichBlack)
+                                        Text("Requested Vehicle: ${currentUser?.requestedDeliveryVehicleType} (${currentUser?.requestedDeliveryVehicleNumber})", fontSize = 11.sp, color = RichBlack)
+                                        Text("Requested Emergency Contact: ${currentUser?.requestedDeliveryEmergencyContact}", fontSize = 11.sp, color = RichBlack)
+                                        Text("Requested Address: ${currentUser?.requestedDeliveryAddress}", fontSize = 11.sp, color = RichBlack, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
                                 }
                             }
 

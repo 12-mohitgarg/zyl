@@ -628,10 +628,33 @@ fun RegisterScreen(
     var sellerAadhaar by remember { mutableStateOf("") }
     var sellerShopPhoto by remember { mutableStateOf("") }
     var sellerOwnerPhoto by remember { mutableStateOf("") }
+    var sellerVideoUrl by remember { mutableStateOf("") }
+    var isUploadingVideo by remember { mutableStateOf(false) }
     var bankAccountNum by remember { mutableStateOf("") }
     var bankIfsc by remember { mutableStateOf("") }
     var sellerPan by remember { mutableStateOf("") }
     var sellerGst by remember { mutableStateOf("") }
+    
+    val videoLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            isUploadingVideo = true
+            viewModel.uploadVideoToCloudinary(
+                uri = uri,
+                sellerEmail = email.ifBlank { "unknown" },
+                onError = { error ->
+                    isUploadingVideo = false
+                    Toast.makeText(context, error, Toast.LENGTH_LONG).show()
+                },
+                onSuccess = { url ->
+                    isUploadingVideo = false
+                    sellerVideoUrl = url
+                    Toast.makeText(context, "Video uploaded successfully!", Toast.LENGTH_SHORT).show()
+                }
+            )
+        }
+    }
     
     // --- Delivery Partner Registration State ---
     var deliveryEmergencyContact by remember { mutableStateOf("") }
@@ -1150,6 +1173,38 @@ fun RegisterScreen(
                     }
                 }
 
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { videoLauncher.launch("video/*") },
+                    colors = CardDefaults.cardColors(containerColor = SoftGrey.copy(alpha = 0.3f)),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp).fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        if (isUploadingVideo) {
+                            CircularProgressIndicator(color = DarkGreenPrimary, modifier = Modifier.size(24.dp))
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text("Uploading video to Cloudinary...", fontSize = 10.sp, color = DarkGreenPrimary, fontWeight = FontWeight.Bold)
+                        } else if (sellerVideoUrl.isNotBlank()) {
+                            Icon(Icons.Default.CheckCircle, contentDescription = "", tint = DarkGreenPrimary, modifier = Modifier.size(34.dp))
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text("Shop Video Uploaded ✓", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = DarkGreenPrimary)
+                            Text("Tap to change video (must be < 1 min)", fontSize = 8.sp, color = MutedText)
+                        } else {
+                            Icon(Icons.Default.Videocam, contentDescription = "", tint = MutedText, modifier = Modifier.size(34.dp))
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text("Shop Video (Req, < 1 min)", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = RichBlack)
+                            Text("Tap to Select Video File", fontSize = 9.sp, color = MutedText)
+                        }
+                    }
+                }
+
                 Spacer(modifier = Modifier.height(14.dp))
 
                 // 5. Bank Account Details
@@ -1241,6 +1296,8 @@ fun RegisterScreen(
                                 Toast.makeText(context, "Please select/upload a shop photo.", Toast.LENGTH_LONG).show()
                             } else if (sellerOwnerPhoto.isBlank()) {
                                 Toast.makeText(context, "Please select/upload an owner photo/selfie.", Toast.LENGTH_LONG).show()
+                            } else if (sellerVideoUrl.isBlank()) {
+                                Toast.makeText(context, "Please select/upload a shop video.", Toast.LENGTH_LONG).show()
                             } else if (bankAccountNum.isBlank() || bankIfsc.isBlank()) {
                                 Toast.makeText(context, "Please enter bank account details.", Toast.LENGTH_LONG).show()
                             } else {
@@ -1260,7 +1317,8 @@ fun RegisterScreen(
                                     sellerOwnerPhoto = sellerOwnerPhoto,
                                     sellerBankAccount = "$bankAccountNum ($bankIfsc)",
                                     sellerPanCard = sellerPan,
-                                    sellerGstNumber = sellerGst
+                                    sellerGstNumber = sellerGst,
+                                    sellerVideoUrl = sellerVideoUrl
                                 )
                             }
                         },
@@ -3050,7 +3108,7 @@ fun ProductItemCard(
                 )
                 Spacer(modifier = Modifier.width(2.dp))
                 Text(
-                    text = product.rating.toString(),
+                    text = String.format(java.util.Locale.US, "%.1f", product.rating),
                     color = CustomWhite,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold
@@ -3445,12 +3503,18 @@ fun CartScreen(
     val totalSubtotal = computedItems.sumOf { it.first.quantity * it.second.price }
 
     val appliedCoupon = if (cartIsCouponApplied) {
-        viewModel.validateCoupon(cartCouponText)
+        val coupon = viewModel.validateCoupon(cartCouponText)
+        if (coupon != null && totalSubtotal >= coupon.minOrderAmount) {
+            coupon
+        } else {
+            null
+        }
     } else {
         null
     }
     val discountPercent = appliedCoupon?.discountPercent ?: 0
-    val cartDiscountAmount = totalSubtotal * (discountPercent / 100.0)
+    val rawDiscount = totalSubtotal * (discountPercent / 100.0)
+    val cartDiscountAmount = if (appliedCoupon != null) rawDiscount.coerceAtMost(appliedCoupon.maxDiscount) else 0.0
     val cartPayableBeforeDelivery = (totalSubtotal - cartDiscountAmount).coerceAtLeast(0.0)
     val cartDistanceIssue = computedItems.firstNotNullOfOrNull { (_, product) ->
         val seller = allUsers.find { it.email.equals(product.sellerEmail, ignoreCase = true) }
@@ -3760,8 +3824,14 @@ fun CartScreen(
                                             onClick = {
                                                 val coupon = viewModel.validateCoupon(cartCouponText)
                                                 if (coupon != null) {
-                                                    cartIsCouponApplied = true
-                                                    Toast.makeText(context, "Coupon ${coupon.code} Applied! ${coupon.discountPercent}% discount!", Toast.LENGTH_SHORT).show()
+                                                    if (totalSubtotal >= coupon.minOrderAmount) {
+                                                        cartIsCouponApplied = true
+                                                        val limitText = if (coupon.maxDiscount < 999999.0) " (max ₹${coupon.maxDiscount})" else ""
+                                                        Toast.makeText(context, "Coupon ${coupon.code} Applied! ${coupon.discountPercent}% discount${limitText}!", Toast.LENGTH_SHORT).show()
+                                                    } else {
+                                                        cartIsCouponApplied = false
+                                                        Toast.makeText(context, "Minimum order of ₹${coupon.minOrderAmount} required for this coupon.", Toast.LENGTH_LONG).show()
+                                                    }
                                                 } else {
                                                     cartIsCouponApplied = false
                                                     Toast.makeText(context, "Invalid Code", Toast.LENGTH_SHORT).show()
@@ -5658,8 +5728,19 @@ fun DirectBuyCheckoutDialog(
     var couponText by remember(product.id) { mutableStateOf("") }
     var couponApplied by remember(product.id) { mutableStateOf(false) }
     val orderId = remember(product.id) { "ZVB-" + java.util.UUID.randomUUID().toString().uppercase().take(8) }
-    val appliedCoupon = if (couponApplied) viewModel.validateCoupon(couponText) else null
-    val discountAmount = product.price * ((appliedCoupon?.discountPercent ?: 0) / 100.0)
+    val appliedCoupon = if (couponApplied) {
+        val coupon = viewModel.validateCoupon(couponText)
+        if (coupon != null && product.price >= coupon.minOrderAmount) {
+            coupon
+        } else {
+            null
+        }
+    } else {
+        null
+    }
+    val discountPercent = appliedCoupon?.discountPercent ?: 0
+    val rawDiscount = product.price * (discountPercent / 100.0)
+    val discountAmount = if (appliedCoupon != null) rawDiscount.coerceAtMost(appliedCoupon.maxDiscount) else 0.0
     val payableBeforeDelivery = (product.price - discountAmount).coerceAtLeast(0.0)
     val seller = allUsers.find { it.email.equals(product.sellerEmail, ignoreCase = true) }
     val distanceIssue = missingDistanceReason(
@@ -5766,12 +5847,19 @@ fun DirectBuyCheckoutDialog(
                             Button(
                                 onClick = {
                                     val coupon = viewModel.validateCoupon(couponText)
-                                    couponApplied = coupon != null
-                                    Toast.makeText(
-                                        context,
-                                        if (coupon != null) "Coupon ${coupon.code} applied" else "Invalid Coupon Code",
-                                        Toast.LENGTH_SHORT
-                                    ).show()
+                                    if (coupon != null) {
+                                        if (product.price >= coupon.minOrderAmount) {
+                                            couponApplied = true
+                                            val limitText = if (coupon.maxDiscount < 999999.0) " (max ₹${coupon.maxDiscount})" else ""
+                                            Toast.makeText(context, "Coupon ${coupon.code} applied!${limitText}", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            couponApplied = false
+                                            Toast.makeText(context, "Minimum order of ₹${coupon.minOrderAmount} required for this coupon.", Toast.LENGTH_LONG).show()
+                                        }
+                                    } else {
+                                        couponApplied = false
+                                        Toast.makeText(context, "Invalid Coupon Code", Toast.LENGTH_SHORT).show()
+                                    }
                                 },
                                 colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary),
                                 shape = RoundedCornerShape(8.dp),
@@ -5957,12 +6045,18 @@ fun ProductDetailPane(
     var isCouponApplied by remember { mutableStateOf(false) }
 
     val appliedCoupon = if (isCouponApplied) {
-        viewModel.validateCoupon(couponText)
+        val coupon = viewModel.validateCoupon(couponText)
+        if (coupon != null && product.price >= coupon.minOrderAmount) {
+            coupon
+        } else {
+            null
+        }
     } else {
         null
     }
     val discountPercent = appliedCoupon?.discountPercent ?: 0
-    val discountAmount = product.price * (discountPercent / 100.0)
+    val rawDiscount = product.price * (discountPercent / 100.0)
+    val discountAmount = if (appliedCoupon != null) rawDiscount.coerceAtMost(appliedCoupon.maxDiscount) else 0.0
     val payableBeforeDelivery = (product.price - discountAmount).coerceAtLeast(0.0)
     val sellerForDistance = allUsers.find { it.email.equals(product.sellerEmail, ignoreCase = true) }
     val directDistanceIssue = missingDistanceReason(
@@ -6221,83 +6315,36 @@ fun ProductDetailPane(
                 )
             )
 
-            // Rating Stars & Flipkart-style breakdown metrics popover
-            Column(
+            // Rating Stars
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 10.dp)
-                    .background(SoftGrey.copy(alpha = 0.3f), shape = RoundedCornerShape(12.dp))
-                    .padding(12.dp)
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
+                Box(
+                    modifier = Modifier
+                        .background(Color(0xFF388E3C), shape = RoundedCornerShape(6.dp))
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .background(Color(0xFF388E3C), shape = RoundedCornerShape(6.dp))
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = "${product.rating}",
-                                color = CustomWhite,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Black
-                            )
-                            Spacer(modifier = Modifier.width(2.dp))
-                            Icon(Icons.Default.Star, contentDescription = "", tint = AccentGold, modifier = Modifier.size(14.dp))
-                        }
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = "2,482 verified customer reviews",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = RichBlack
+                            text = String.format(java.util.Locale.US, "%.1f", product.rating),
+                            color = CustomWhite,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Black
                         )
-                        Text(
-                            text = "98% Positive Buyer Feedback • 4.8 Seller score",
-                            fontSize = 11.sp,
-                            color = MutedText
-                        )
+                        Spacer(modifier = Modifier.width(2.dp))
+                        Icon(Icons.Default.Star, contentDescription = "", tint = AccentGold, modifier = Modifier.size(14.dp))
                     }
                 }
-
-                Spacer(modifier = Modifier.height(10.dp))
-                Divider(color = SoftGrey)
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // Breakdown list
-                listOf(
-                    Pair("5 Star", 0.84f),
-                    Pair("4 Star", 0.12f),
-                    Pair("3 Star", 0.04f)
-                ).forEach { (label, fraction) ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(text = label, fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(42.dp), color = MutedText)
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(6.dp)
-                                .background(SoftGrey, shape = CircleShape)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth(fraction)
-                                    .fillMaxHeight()
-                                    .background(DarkGreenPrimary, shape = CircleShape)
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(text = "${(fraction * 100).toInt()}%", fontSize = 10.sp, fontWeight = FontWeight.Black, color = RichBlack)
-                    }
-                    Spacer(modifier = Modifier.height(4.dp))
-                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(
+                    text = "Customer Rating",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = RichBlack
+                )
             }
 
             // Pricing details block
@@ -6448,66 +6495,6 @@ fun ProductDetailPane(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Expandable Technical Specs Accordion
-            Card(
-                colors = CardDefaults.cardColors(containerColor = CustomWhite),
-                border = BorderStroke(1.dp, SoftGrey),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { specsExpanded = !specsExpanded },
-                shape = RoundedCornerShape(10.dp)
-            ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.SettingsSuggest, contentDescription = "", tint = DarkGreenPrimary, modifier = Modifier.size(20.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "Technical Specifications",
-                                fontWeight = FontWeight.Bold,
-                                color = RichBlack,
-                                fontSize = 13.sp
-                            )
-                        }
-                        Icon(
-                            imageVector = if (specsExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                            contentDescription = "",
-                            tint = MutedText
-                        )
-                    }
-
-                    if (specsExpanded) {
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Divider(color = SoftGrey)
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        val specData = listOf(
-                            Pair("Manufacturer", "Zyl Vor Global Group Ltd."),
-                            Pair("Product Material", "Premium Bio-Sourced Eco Polymers"),
-                            Pair("Net Weight", "340 grams (Eco-lightweight)"),
-                            Pair("Certified Carbon Score", "A+ Certified Carbon Neutral"),
-                            Pair("Warranty Duration", "1-Year Full Care Comprehensive Warranty")
-                        )
-
-                        specData.forEach { (key, valString) ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 4.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(text = key, fontSize = 11.sp, color = MutedText, fontWeight = FontWeight.Bold)
-                                Text(text = valString, fontSize = 11.sp, color = RichBlack, fontWeight = FontWeight.ExtraBold)
-                            }
-                        }
-                    }
-                }
-            }
-
             Spacer(modifier = Modifier.height(14.dp))
 
             // Technical details description overview
@@ -6528,70 +6515,6 @@ fun ProductDetailPane(
                     color = RichBlack.copy(alpha = 0.85f)
                 )
             )
-
-            Spacer(modifier = Modifier.height(20.dp))
-
-            // Delivery Assurance card
-            Card(
-                colors = CardDefaults.cardColors(containerColor = LightGreenSecondary),
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(10.dp)
-            ) {
-                Row(
-                    modifier = Modifier.padding(14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(Icons.Default.Moped, contentDescription = "", tint = DarkGreenPrimary, modifier = Modifier.size(28.dp))
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text("Guaranteed Emerald Rapid Delivery", fontWeight = FontWeight.Bold, color = RichBlack, fontSize = 13.sp)
-                        Text("Order within 2 hours to receive it tomorrow morning.", fontSize = 11.sp, color = MutedText)
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(20.dp))
-
-            // --- CUSTOMER REVIEW COMMENTS LIST ---
-            Text(
-                text = "Verified Buyer Reviews",
-                fontWeight = FontWeight.Black,
-                fontSize = 14.sp,
-                color = RichBlack
-            )
-            Spacer(modifier = Modifier.height(10.dp))
-
-            listOf(
-                Triple("Sophia Miller", "Incredible premium feel. Spotless zero carbon packaging and arrived exactly on time! Highly recommend.", "5.0 ★"),
-                Triple("Liam Jackson", "Fabulous fit and finish. Built like a luxury item and works exactly as described.", "4.8 ★")
-            ).forEach { (author, review, ratingVal) ->
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = SoftGrey.copy(alpha = 0.25f)),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp),
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(text = author, fontSize = 11.sp, fontWeight = FontWeight.Black, color = RichBlack)
-                            Box(
-                                modifier = Modifier
-                                    .background(DarkGreenPrimary, shape = RoundedCornerShape(4.dp))
-                                    .padding(horizontal = 6.dp, vertical = 2.dp)
-                            ) {
-                                Text(text = ratingVal, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = CustomWhite)
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(text = "\"$review\"", fontSize = 11.sp, color = RichBlack, lineHeight = 15.sp)
-                    }
-                }
-            }
 
             Spacer(modifier = Modifier.height(32.dp))
 
@@ -6786,8 +6709,14 @@ fun ProductDetailPane(
                                             onClick = {
                                                 val coupon = viewModel.validateCoupon(couponText)
                                                 if (coupon != null) {
-                                                    isCouponApplied = true
-                                                    Toast.makeText(context, "Coupon ${coupon.code} Applied successfully! ${coupon.discountPercent}% OFF!", Toast.LENGTH_SHORT).show()
+                                                    if (product.price >= coupon.minOrderAmount) {
+                                                        isCouponApplied = true
+                                                        val limitText = if (coupon.maxDiscount < 999999.0) " (max ₹${coupon.maxDiscount})" else ""
+                                                        Toast.makeText(context, "Coupon ${coupon.code} Applied successfully! ${coupon.discountPercent}% OFF${limitText}!", Toast.LENGTH_SHORT).show()
+                                                    } else {
+                                                        isCouponApplied = false
+                                                        Toast.makeText(context, "Minimum order of ₹${coupon.minOrderAmount} required for this coupon.", Toast.LENGTH_LONG).show()
+                                                    }
                                                 } else {
                                                     isCouponApplied = false
                                                     Toast.makeText(context, "Invalid Coupon Code", Toast.LENGTH_SHORT).show()
@@ -7127,7 +7056,11 @@ fun SellerPanelScreen(
             ) { url ->
                 imageList = imageList + url
                 showProductImageSelectorDialog = false
-                Toast.makeText(context, "Product image uploaded successfully!", Toast.LENGTH_SHORT).show()
+                if (url.startsWith("http://", true) || url.startsWith("https://", true)) {
+                    Toast.makeText(context, "Product image uploaded successfully!", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(context, "Saved locally. Cloud upload failed. Other users won't see this image.", Toast.LENGTH_LONG).show()
+                }
             }
         }
     }
@@ -7724,7 +7657,13 @@ fun SellerPanelScreen(
                     Scaffold(
                         floatingActionButton = {
                             FloatingActionButton(
-                                onClick = { showAddProductDialog = true },
+                                onClick = {
+                                    if (currentUser?.isSellerVerified == true) {
+                                        showAddProductDialog = true
+                                    } else {
+                                        Toast.makeText(context, "Your account is not verified. Verified sellers can list products.", Toast.LENGTH_LONG).show()
+                                    }
+                                },
                                 containerColor = DarkGreenPrimary,
                                 contentColor = CustomWhite,
                                 modifier = Modifier.testTag("add_product_fab")
@@ -7777,7 +7716,13 @@ fun SellerPanelScreen(
                                             Text("No products listed yet.", color = MutedText, fontSize = 12.sp)
                                             Spacer(modifier = Modifier.height(10.dp))
                                             Button(
-                                                onClick = { showAddProductDialog = true },
+                                                onClick = {
+                                                    if (currentUser?.isSellerVerified == true) {
+                                                        showAddProductDialog = true
+                                                    } else {
+                                                        Toast.makeText(context, "Your account is not verified. Verified sellers can list products.", Toast.LENGTH_LONG).show()
+                                                    }
+                                                },
                                                 colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary)
                                             ) {
                                                 Text("List First Product", color = CustomWhite)
@@ -7838,20 +7783,30 @@ fun SellerPanelScreen(
                                             }
                                             Column {
                                                 IconButton(onClick = {
-                                                    editingProduct = prod
-                                                    newProdName = prod.name
-                                                    newProdPrice = prod.price.toString()
-                                                    newProdOrigPrice = prod.originalPrice.toString()
-                                                    newProdCat = prod.category
-                                                    newProdDesc = prod.description
-                                                    newProdStock = prod.stockQuantity.toString()
-                                                    imageList = listOf(prod.imageUrlName) +
-                                                        prod.extraImages.split(",").filter { it.isNotBlank() }
-                                                    showAddProductDialog = true
+                                                    if (currentUser?.isSellerVerified == true) {
+                                                        editingProduct = prod
+                                                        newProdName = prod.name
+                                                        newProdPrice = prod.price.toString()
+                                                        newProdOrigPrice = prod.originalPrice.toString()
+                                                        newProdCat = prod.category
+                                                        newProdDesc = prod.description
+                                                        newProdStock = prod.stockQuantity.toString()
+                                                        imageList = listOf(prod.imageUrlName) +
+                                                            prod.extraImages.split(",").filter { it.isNotBlank() }
+                                                        showAddProductDialog = true
+                                                    } else {
+                                                        Toast.makeText(context, "Your account is not verified. Verified sellers can manage products.", Toast.LENGTH_LONG).show()
+                                                    }
                                                 }) {
                                                     Icon(Icons.Default.Edit, "Edit product", tint = DarkGreenPrimary)
                                                 }
-                                                IconButton(onClick = { deletingProduct = prod }) {
+                                                IconButton(onClick = {
+                                                    if (currentUser?.isSellerVerified == true) {
+                                                        deletingProduct = prod
+                                                    } else {
+                                                        Toast.makeText(context, "Your account is not verified. Verified sellers can manage products.", Toast.LENGTH_LONG).show()
+                                                    }
+                                                }) {
                                                     Icon(Icons.Default.Delete, "Delete product", tint = AccentRed)
                                                 }
                                             }
@@ -7996,6 +7951,36 @@ fun SellerPanelScreen(
                             }
                         }
 
+                        if (!currentUser?.sellerVideoUrl.isNullOrBlank()) {
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(containerColor = CustomWhite),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(16.dp)) {
+                                    Text("Seller Introduction Video", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = RichBlack)
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    androidx.compose.ui.viewinterop.AndroidView(
+                                        factory = { ctx ->
+                                            android.widget.VideoView(ctx).apply {
+                                                setVideoPath(currentUser?.sellerVideoUrl)
+                                                val mediaController = android.widget.MediaController(ctx)
+                                                mediaController.setAnchorView(this)
+                                                setMediaController(mediaController)
+                                                setOnPreparedListener { mp ->
+                                                    mp.isLooping = true
+                                                }
+                                            }
+                                        },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(200.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                    )
+                                }
+                            }
+                        }
+
                         // Edit Request Form Widget
                         Card(
                             modifier = Modifier.fillMaxWidth(),
@@ -8085,20 +8070,6 @@ fun SellerPanelScreen(
                                             Text("Owner: ${currentUser?.requestedName}", fontSize = 11.sp, color = RichBlack)
                                             Text("Shop: ${currentUser?.requestedShopName}", fontSize = 11.sp, color = RichBlack)
                                             Text("Address: ${currentUser?.requestedShopAddress}", fontSize = 11.sp, color = RichBlack, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                            
-                                            Spacer(modifier = Modifier.height(10.dp))
-                                            Button(
-                                                onClick = {
-                                                    viewModel.approveProfileEditRequest(currentUser?.email ?: "")
-                                                    Toast.makeText(context, "Admin Bypass: Changes approved instantly!", Toast.LENGTH_SHORT).show()
-                                                },
-                                                colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary),
-                                                shape = RoundedCornerShape(6.dp),
-                                                modifier = Modifier.fillMaxWidth().height(32.dp),
-                                                contentPadding = PaddingValues(0.dp)
-                                            ) {
-                                                Text("Approve Instantly (Simulated Admin)", fontSize = 11.sp, color = CustomWhite)
-                                            }
                                         }
                                     }
                                 }
