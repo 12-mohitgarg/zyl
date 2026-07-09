@@ -739,11 +739,13 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
                 return@launch
             }
 
+            val cleanEmail = email.trim().lowercase()
+
             try {
-                // Try to login with Firebase within a 4-second timeout to prevent hanging forever
-                val firebaseSuccess = kotlinx.coroutines.withTimeoutOrNull(4000L) {
+                // Try to login with Firebase within a 20-second timeout to prevent hanging forever
+                val firebaseSuccess = kotlinx.coroutines.withTimeoutOrNull(20000L) {
                     try {
-                        FirebaseAuth.getInstance().signInWithEmailAndPassword(email, pword).awaitTask()
+                        FirebaseAuth.getInstance().signInWithEmailAndPassword(cleanEmail, pword).awaitTask()
                         true
                     } catch (e: Exception) {
                         e.printStackTrace()
@@ -752,11 +754,11 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 if (firebaseSuccess == true) {
-                    // Fetch user from Firestore within 4 seconds
-                    val doc = kotlinx.coroutines.withTimeoutOrNull(4000L) {
+                    // Fetch user from Firestore within 20 seconds
+                    val doc = kotlinx.coroutines.withTimeoutOrNull(20000L) {
                         try {
                             FirebaseFirestore.getInstance().collection("users")
-                                .document(email)
+                                .document(cleanEmail)
                                 .get()
                                 .awaitTask()
                         } catch (e: Exception) {
@@ -848,13 +850,19 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
                 _authState.value = AuthState.Error("All fields are mandatory.")
                 return@launch
             }
+            if (pword.length < 6) {
+                _authState.value = AuthState.Error("Password must be at least 6 characters.")
+                return@launch
+            }
             if (pword != confPword) {
                 _authState.value = AuthState.Error("Passwords do not match.")
                 return@launch
             }
 
+            val cleanEmail = email.trim().lowercase()
+
             val newUser = User(
-                email = email,
+                email = cleanEmail,
                 name = name,
                 password = pword,
                 savedAddress = if (role == "Seller") shopAddress else if (role == "DeliveryPartner") deliveryAddress else "ffff123 Green Bazaar Lane, Eco City, 54002",
@@ -891,12 +899,12 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
             )
 
             try {
-                // Try to register in Firebase Auth and Firestore with a 4-second timeout to prevent hanging forever
-                val firebaseSuccess = kotlinx.coroutines.withTimeoutOrNull(4000L) {
+                // Try to register in Firebase Auth and Firestore with a 20-second timeout to prevent hanging forever
+                val firebaseSuccess = kotlinx.coroutines.withTimeoutOrNull(20000L) {
                     try {
-                        FirebaseAuth.getInstance().createUserWithEmailAndPassword(email, pword).awaitTask()
+                        FirebaseAuth.getInstance().createUserWithEmailAndPassword(cleanEmail, pword).awaitTask()
                         FirebaseFirestore.getInstance().collection("users")
-                            .document(email)
+                            .document(cleanEmail)
                             .set(newUser.toMap())
                             .awaitTask()
                         true
@@ -1007,6 +1015,20 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
     fun updatePrivacyAccepted(accepted: Boolean) {
         val current = _currentUser.value ?: return
         val updated = current.copy(privacyAccepted = accepted)
+        saveUser(updated)
+    }
+
+    fun updateSellerPhotosAndVideo(
+        shopPhoto: String?,
+        ownerPhoto: String?,
+        videoUrl: String?
+    ) {
+        val current = _currentUser.value ?: return
+        val updated = current.copy(
+            sellerShopPhoto = shopPhoto ?: current.sellerShopPhoto,
+            sellerOwnerPhoto = ownerPhoto ?: current.sellerOwnerPhoto,
+            sellerVideoUrl = videoUrl ?: current.sellerVideoUrl
+        )
         saveUser(updated)
     }
 
@@ -1475,17 +1497,62 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    // Uploads any image (shop photo, owner photo, delivery photo, etc.) to Cloudinary
     fun uploadImageToFirebaseStorage(uri: Uri, path: String, onSuccess: (String) -> Unit) {
         viewModelScope.launch {
             try {
-                val storageRef = com.google.firebase.storage.FirebaseStorage.getInstance().reference.child(path)
-                storageRef.putFile(uri).awaitTask()
-                val downloadUrl = storageRef.downloadUrl.awaitTask().toString()
-                onSuccess(downloadUrl)
+                val cloudName = BuildConfig.CLOUDINARY_CLOUD_NAME
+                val uploadPreset = BuildConfig.CLOUDINARY_UPLOAD_PRESET
+                val folder = BuildConfig.CLOUDINARY_FOLDER
+
+                val app = getApplication<Application>()
+                val resolver = app.contentResolver
+
+                val (mimeType, extension, bytes) = withContext(Dispatchers.IO) {
+                    val mime = resolver.getType(uri) ?: "image/jpeg"
+                    val ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(mime) ?: "jpg"
+                    val b = resolver.openInputStream(uri)?.use { it.readBytes() }
+                        ?: throw IllegalStateException("Unable to read selected image.")
+                    Triple(mime, ext, b)
+                }
+
+                // Use path as publicId (sanitize it)
+                val publicId = path.replace(Regex("[^A-Za-z0-9_/.-]"), "_").removeSuffix(".$extension")
+
+                val url = withContext(Dispatchers.IO) {
+                    val fileBody = bytes.toRequestBody(mimeType.toMediaTypeOrNull())
+                    val multipart = MultipartBody.Builder()
+                        .setType(MultipartBody.FORM)
+                        .addFormDataPart("file", "upload.$extension", fileBody)
+                        .addFormDataPart("upload_preset", uploadPreset)
+                        .addFormDataPart("public_id", publicId)
+                        .apply {
+                            val normalizedFolder = folder.trim()
+                            if (normalizedFolder.isNotBlank() &&
+                                !normalizedFolder.startsWith("your_", ignoreCase = true) &&
+                                !normalizedFolder.contains("_here", ignoreCase = true)) {
+                                addFormDataPart("folder", normalizedFolder)
+                            }
+                        }
+                        .build()
+
+                    val request = Request.Builder()
+                        .url("https://api.cloudinary.com/v1_1/$cloudName/image/upload")
+                        .post(multipart)
+                        .build()
+
+                    OkHttpClient().newCall(request).execute().use { response ->
+                        val raw = response.body?.string().orEmpty()
+                        if (!response.isSuccessful) throw IllegalStateException("Cloudinary error: $raw")
+                        JSONObject(raw).optString("secure_url").ifBlank {
+                            JSONObject(raw).optString("url")
+                        }.ifBlank { throw IllegalStateException("No URL returned") }
+                    }
+                }
+                onSuccess(url)
             } catch (e: Exception) {
                 e.printStackTrace()
-                // Graceful fallback: return the content Uri string as the image URL
-                // Coil will render this content Uri perfectly on screen
+                // Fallback: use content URI locally (Coil can render it on-device)
                 onSuccess(uri.toString())
             }
         }
@@ -1527,83 +1594,82 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
                 val uploadPreset = BuildConfig.CLOUDINARY_UPLOAD_PRESET
                 val folder = BuildConfig.CLOUDINARY_FOLDER
 
-                val downloadUrl = withContext(Dispatchers.IO) {
-                    val app = getApplication<Application>()
-                    val resolver = app.contentResolver
-                    val mimeType = resolver.getType(uri) ?: "image/jpeg"
-                    val extension = MimeTypeMap.getSingleton().getExtensionFromMimeType(mimeType) ?: "jpg"
-                    val safeSeller = sellerEmail.ifBlank { "unknown" }.replace(Regex("[^A-Za-z0-9_-]"), "_")
-                    val publicId = "${safeSeller}_$imageId"
-                    val bytes = resolver.openInputStream(uri)?.use { it.readBytes() }
+                val app = getApplication<Application>()
+                val resolver = app.contentResolver
+
+                // Step 1: Read file bytes on IO thread (safe for IO)
+                val (mimeStr, extStr, safeStr, bytesArr) = withContext(Dispatchers.IO) {
+                    val mime = resolver.getType(uri) ?: "image/jpeg"
+                    val ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(mime) ?: "jpg"
+                    val safe = sellerEmail.ifBlank { "unknown" }.replace(Regex("[^A-Za-z0-9_-]"), "_")
+                    val b = resolver.openInputStream(uri)?.use { it.readBytes() }
                         ?: throw IllegalStateException("Unable to read selected image.")
+                    arrayOf(mime, ext, safe, b)
+                }
+                @Suppress("UNCHECKED_CAST")
+                val mimeType = mimeStr as String
+                val extension = extStr as String
+                val safeSeller = safeStr as String
+                val bytes = bytesArr as ByteArray
+                val publicId = "${safeSeller}_$imageId"
 
-                    suspend fun uploadToFirebase(): String {
-                        val storagePath = "product_images/$safeSeller/product_$imageId.$extension"
-                        val storageRef = com.google.firebase.storage.FirebaseStorage.getInstance().reference.child(storagePath)
-                        storageRef.putBytes(bytes).awaitTask()
-                        return storageRef.downloadUrl.awaitTask().toString()
-                    }
+                fun isConfigured(value: String): Boolean {
+                    val normalized = value.trim()
+                    return normalized.isNotBlank() &&
+                        !normalized.startsWith("your_", ignoreCase = true) &&
+                        !normalized.contains("_here", ignoreCase = true)
+                }
 
-                    fun isConfigured(value: String): Boolean {
-                        val normalized = value.trim()
-                        return normalized.isNotBlank() &&
-                            !normalized.startsWith("your_", ignoreCase = true) &&
-                            !normalized.contains("_here", ignoreCase = true)
-                    }
+                if (!isConfigured(cloudName) || !isConfigured(uploadPreset)) {
+                    onError("Cloudinary is not configured. Set CLOUDINARY_CLOUD_NAME and CLOUDINARY_UPLOAD_PRESET in .env")
+                    val localPath = saveImageLocally(uri, imageId)
+                    onSuccess(localPath)
+                    return@launch
+                }
 
-                    if (!isConfigured(cloudName) || !isConfigured(uploadPreset)) {
-                        return@withContext uploadToFirebase()
-                    }
-
-                    try {
-                        val fileBody = bytes.toRequestBody(mimeType.toMediaTypeOrNull())
-                        val multipart = MultipartBody.Builder()
-                            .setType(MultipartBody.FORM)
-                            .addFormDataPart("file", "product_$imageId.$extension", fileBody)
-                            .addFormDataPart("upload_preset", uploadPreset)
-                            .addFormDataPart("public_id", publicId)
-                            .apply {
-                                if (isConfigured(folder)) addFormDataPart("folder", folder)
-                            }
-                            .build()
-
-                        val request = Request.Builder()
-                            .url("https://api.cloudinary.com/v1_1/$cloudName/image/upload")
-                            .post(multipart)
-                            .build()
-
-                        OkHttpClient().newCall(request).execute().use { response ->
-                            val raw = response.body?.string().orEmpty()
-                            if (!response.isSuccessful) {
-                                throw IllegalStateException("Cloudinary upload failed: $raw")
-                            }
-                            JSONObject(raw).optString("secure_url").ifBlank {
-                                JSONObject(raw).optString("url")
-                            }.ifBlank {
-                                throw IllegalStateException("Cloudinary did not return an image URL.")
-                            }
+                // Upload to Cloudinary on IO thread
+                val downloadUrl = withContext(Dispatchers.IO) {
+                    val fileBody = bytes.toRequestBody(mimeType.toMediaTypeOrNull())
+                    val multipart = MultipartBody.Builder()
+                        .setType(MultipartBody.FORM)
+                        .addFormDataPart("file", "product_$imageId.$extension", fileBody)
+                        .addFormDataPart("upload_preset", uploadPreset)
+                        .addFormDataPart("public_id", publicId)
+                        .apply {
+                            if (isConfigured(folder)) addFormDataPart("folder", folder)
                         }
-                    } catch (cloudinaryError: Exception) {
-                        try {
-                            uploadToFirebase()
-                        } catch (firebaseError: Exception) {
-                            throw IllegalStateException(
-                                "Image upload failed. Cloudinary: ${cloudinaryError.message}. Firebase: ${firebaseError.message}"
-                            )
+                        .build()
+
+                    val request = Request.Builder()
+                        .url("https://api.cloudinary.com/v1_1/$cloudName/image/upload")
+                        .post(multipart)
+                        .build()
+
+                    OkHttpClient().newCall(request).execute().use { response ->
+                        val raw = response.body?.string().orEmpty()
+                        if (!response.isSuccessful) {
+                            throw IllegalStateException("Cloudinary upload failed: $raw")
+                        }
+                        JSONObject(raw).optString("secure_url").ifBlank {
+                            JSONObject(raw).optString("url")
+                        }.ifBlank {
+                            throw IllegalStateException("Cloudinary did not return an image URL.")
                         }
                     }
                 }
 
                 onSuccess(downloadUrl)
+
             } catch (e: Exception) {
                 e.printStackTrace()
-                val errorMsg = e.message ?: "Unknown upload error"
+                val errorMsg = "${e.javaClass.simpleName}: ${e.message ?: "Unknown error"}"
                 onError("Cloud upload failed: $errorMsg. Image saved locally for preview.")
                 val localPath = saveImageLocally(uri, imageId)
                 onSuccess(localPath)
             }
         }
     }
+
 
     fun uploadVideoToCloudinary(
         uri: Uri,

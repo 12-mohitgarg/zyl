@@ -586,7 +586,10 @@ class AppRepository(private val appDao: AppDao) {
             .collection("users")
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
-                    close(error)
+                    // Do NOT close the flow — permission-denied or network errors
+                    // are transient. Closing crashes the app. Log and recover instead.
+                    error.printStackTrace()
+                    trySend(emptyList())
                     return@addSnapshotListener
                 }
                 if (snapshot != null) {
@@ -628,7 +631,10 @@ class AppRepository(private val appDao: AppDao) {
             .collection("products")
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
-                    close(error)
+                    // Do NOT close the flow — permission-denied or network errors
+                    // are transient. Closing crashes the app. Log and recover instead.
+                    error.printStackTrace()
+                    trySend(emptyList())
                     return@addSnapshotListener
                 }
                 if (snapshot != null) {
@@ -940,7 +946,8 @@ class AppRepository(private val appDao: AppDao) {
             .collection("banners")
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
-                    close(error)
+                    error.printStackTrace()
+                    trySend(emptyList())
                     return@addSnapshotListener
                 }
                 if (snapshot != null) {
@@ -970,7 +977,8 @@ class AppRepository(private val appDao: AppDao) {
             .collection("coupons")
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
-                    close(error)
+                    error.printStackTrace()
+                    trySend(emptyList())
                     return@addSnapshotListener
                 }
                 if (snapshot != null) {
@@ -997,7 +1005,8 @@ class AppRepository(private val appDao: AppDao) {
             .collection("shortcuts")
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
-                    close(error)
+                    error.printStackTrace()
+                    trySend(emptyList())
                     return@addSnapshotListener
                 }
                 if (snapshot != null) {
@@ -1026,7 +1035,8 @@ class AppRepository(private val appDao: AppDao) {
             .document("main")
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
-                    close(error)
+                    error.printStackTrace()
+                    trySend(AppConfig())
                     return@addSnapshotListener
                 }
                 if (snapshot != null && snapshot.exists()) {

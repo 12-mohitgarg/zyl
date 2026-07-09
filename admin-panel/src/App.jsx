@@ -16,7 +16,8 @@ import {
   Star,
   Trash2,
   Users as UsersIcon,
-  Settings
+  Settings,
+  Ticket
 } from 'lucide-react';
 import {
   collection,
@@ -27,21 +28,22 @@ import {
   setDoc,
   updateDoc
 } from 'firebase/firestore';
-import { db } from './firebase';
+import { db, auth } from './firebase';
+import { signInWithEmailAndPassword, signOut as firebaseSignOut, onAuthStateChanged } from 'firebase/auth';
 
 const ORDER_STATUSES = ['Pending', 'Processing', 'Ready to Deliver', 'Shipped', 'Delivered', 'Cancelled', 'Seller Reject Requested'];
 const ROLE_FILTERS = ['All', 'User', 'Seller', 'DeliveryPartner', 'Admin'];
 
 const defaultProducts = [
-  { id: 1, name: 'ZYL Sound Pro Wireless ANC', price: 129.99, originalPrice: 189.99, rating: 4.8, category: 'Electronics', imageUrlName: 'img_hero_banner', description: 'Premium high-fidelity wireless spatial audio headphones with leading hybrid Active Noise Cancelation. Styled in matte black with dynamic metallic accents.', isFeatured: true, sellerEmail: 'seller@store.com', extraImages: '', stockQuantity: 25 },
-  { id: 2, name: 'ZYL Active Sport Sync Watch', price: 199.99, originalPrice: 249.99, rating: 4.6, category: 'Electronics', imageUrlName: '', description: 'Always-on AMOLED wellness assistant monitor with precise multi-sport tracking, sleep telemetry, and rapid 5-day continuous charging capability.', isFeatured: true, sellerEmail: 'seller@store.com', extraImages: '', stockQuantity: 18 },
-  { id: 3, name: 'Premium Farms Organic Apples (1kg)', price: 4.99, originalPrice: 6.99, rating: 4.9, category: 'Fresh Products', imageUrlName: '', description: 'Crispy, hand-picked seasonal honeycomb organic apples. Sourced sustainably from local highland green farms directly to your table of freshness.', isFeatured: true, sellerEmail: 'seller@store.com', extraImages: '', stockQuantity: 80 },
-  { id: 4, name: 'Farm-Fresh Avocados (Pack of 3)', price: 5.49, originalPrice: 7.99, rating: 4.7, category: 'Fresh Products', imageUrlName: '', description: 'Buttery local green Hass avocados ripe and ready to serve. Wealthy with nutrients, vitamins, and pure monounsaturated wellness lipids.', isFeatured: false, sellerEmail: 'seller@store.com', extraImages: '', stockQuantity: 45 },
-  { id: 5, name: 'Organic Handpicked Strawberries (500g)', price: 6.99, originalPrice: 8.99, rating: 4.8, category: 'Fresh Products', imageUrlName: '', description: 'Sweet, delicious organic berries cultivated with care. Selected for supreme taste, vibrant crimson look, and ideal ripeness levels.', isFeatured: true, sellerEmail: 'seller@store.com', extraImages: '', stockQuantity: 60 },
-  { id: 6, name: 'Emerald Velocity Retro Sneakers', price: 79.99, originalPrice: 119.99, rating: 4.7, category: 'Fashion', imageUrlName: '', description: 'Vibrant emerald accents paired with breathable slate mesh and durable vulcanized running heels. Engineered for day-to-day dynamic strides.', isFeatured: true, sellerEmail: 'seller@store.com', extraImages: '', stockQuantity: 22 },
-  { id: 7, name: 'Classic Forest Leather Wallet', price: 34.99, originalPrice: 49.99, rating: 4.5, category: 'Fashion', imageUrlName: '', description: 'Genuine handcrafted full-grain green premium leather wallet. Offers precise built-in card slips and security shielding lines.', isFeatured: false, sellerEmail: 'seller@store.com', extraImages: '', stockQuantity: 35 },
-  { id: 8, name: 'Aroma Brew Smart Drip Coffee Maker', price: 59.99, originalPrice: 89.99, rating: 4.4, category: 'Home & Kitchen', imageUrlName: '', description: 'Sleek compact programmable thermal drip brewing machine. Prepares rich bold roast flavor directly into double-walled glass mugs.', isFeatured: false, sellerEmail: 'seller@store.com', extraImages: '', stockQuantity: 12 },
-  { id: 9, name: 'TurboCrisp Digital Air Fryer', price: 99.99, originalPrice: 149.99, rating: 4.8, category: 'Home & Kitchen', imageUrlName: '', description: 'Superheated high-density air vortex crisping technology. Cooks crunchy golden wings, chips, and snacks with up to 90% reduced fat oil.', isFeatured: true, sellerEmail: 'seller@store.com', extraImages: '', stockQuantity: 16 }
+  { id: 1, name: 'ZYL Sound Pro Wireless ANC', price: 129.99, originalPrice: 189.99, rating: 4.8, category: 'Electronics', imageUrlName: 'img_hero_banner', description: 'Premium high-fidelity wireless spatial audio headphones with leading hybrid Active Noise Cancelation. Styled in matte black with dynamic metallic accents.', isFeatured: true, sellerEmail: 'seller@store.com', extraImages: '' },
+  { id: 2, name: 'ZYL Active Sport Sync Watch', price: 199.99, originalPrice: 249.99, rating: 4.6, category: 'Electronics', imageUrlName: '', description: 'Always-on AMOLED wellness assistant monitor with precise multi-sport tracking, sleep telemetry, and rapid 5-day continuous charging capability.', isFeatured: true, sellerEmail: 'seller@store.com', extraImages: '' },
+  { id: 3, name: 'Premium Farms Organic Apples (1kg)', price: 4.99, originalPrice: 6.99, rating: 4.9, category: 'Fresh Products', imageUrlName: '', description: 'Crispy, hand-picked seasonal honeycomb organic apples. Sourced sustainably from local highland green farms directly to your table of freshness.', isFeatured: true, sellerEmail: 'seller@store.com', extraImages: '' },
+  { id: 4, name: 'Farm-Fresh Avocados (Pack of 3)', price: 5.49, originalPrice: 7.99, rating: 4.7, category: 'Fresh Products', imageUrlName: '', description: 'Buttery local green Hass avocados ripe and ready to serve. Wealthy with nutrients, vitamins, and pure monounsaturated wellness lipids.', isFeatured: false, sellerEmail: 'seller@store.com', extraImages: '' },
+  { id: 5, name: 'Organic Handpicked Strawberries (500g)', price: 6.99, originalPrice: 8.99, rating: 4.8, category: 'Fresh Products', imageUrlName: '', description: 'Sweet, delicious organic berries cultivated with care. Selected for supreme taste, vibrant crimson look, and ideal ripeness levels.', isFeatured: true, sellerEmail: 'seller@store.com', extraImages: '' },
+  { id: 6, name: 'Emerald Velocity Retro Sneakers', price: 79.99, originalPrice: 119.99, rating: 4.7, category: 'Fashion', imageUrlName: '', description: 'Vibrant emerald accents paired with breathable slate mesh and durable vulcanized running heels. Engineered for day-to-day dynamic strides.', isFeatured: true, sellerEmail: 'seller@store.com', extraImages: '' },
+  { id: 7, name: 'Classic Forest Leather Wallet', price: 34.99, originalPrice: 49.99, rating: 4.5, category: 'Fashion', imageUrlName: '', description: 'Genuine handcrafted full-grain green premium leather wallet. Offers precise built-in card slips and security shielding lines.', isFeatured: false, sellerEmail: 'seller@store.com', extraImages: '' },
+  { id: 8, name: 'Aroma Brew Smart Drip Coffee Maker', price: 59.99, originalPrice: 89.99, rating: 4.4, category: 'Home & Kitchen', imageUrlName: '', description: 'Sleek compact programmable thermal drip brewing machine. Prepares rich bold roast flavor directly into double-walled glass mugs.', isFeatured: false, sellerEmail: 'seller@store.com', extraImages: '' },
+  { id: 9, name: 'TurboCrisp Digital Air Fryer', price: 99.99, originalPrice: 149.99, rating: 4.8, category: 'Home & Kitchen', imageUrlName: '', description: 'Superheated high-density air vortex crisping technology. Cooks crunchy golden wings, chips, and snacks with up to 90% reduced fat oil.', isFeatured: true, sellerEmail: 'seller@store.com', extraImages: '' }
 ];
 
 const defaultUsers = [
@@ -52,6 +54,7 @@ const defaultUsers = [
   { email: 'rider@bazaar.com', name: 'Fast Courier Rider', role: 'DeliveryPartner', isDeliveryPartnerVerified: true, deliveryMobile: '+91 9999911111', deliveryVehicleType: 'Electric Scooter', deliveryVehicleNumber: 'DL-3C-EC-9999', deliveryEmergencyContact: '+91 9999922222' },
   { email: 'pending.rider@bazaar.com', name: 'New Delivery Partner', role: 'DeliveryPartner', isDeliveryPartnerVerified: false, deliveryMobile: '+91 9999933333', deliveryVehicleType: 'Bike', deliveryVehicleNumber: 'DL-4S-NP-2211' }
 ];
+
 
 const defaultOrders = [
   { orderId: 'ORD-9872', email: 'buyer@bazaar.com', orderDate: Date.now() - 3600000 * 2, totalAmount: 134.98, status: 'Processing', itemsSummary: '1x ZYL Sound Pro Wireless ANC, 1x Organic Apples', paymentMode: 'Card ending in 4242', deliveryAddress: '22 Market Street, Eco City', couponApplied: 'GREEN10', deliveryPartnerEmail: '', deliveryStatus: '', sellerConfirmed: false },
@@ -112,26 +115,88 @@ function App() {
   const [newProductDesc, setNewProductDesc] = useState('');
   const [newProductSeller, setNewProductSeller] = useState('admin@bazaar.com');
   const [newProductFeatured, setNewProductFeatured] = useState(false);
-  const [newProductStock, setNewProductStock] = useState('');
-  const [appConfig, setAppConfig] = useState({ serviceCities: [], servicePincodes: [], payoutDelayHours: 24 });
+  const [newProductImageFile, setNewProductImageFile] = useState(null);
+  const [newProductImagePreview, setNewProductImagePreview] = useState('');
+  const [newProductImageUrl, setNewProductImageUrl] = useState('');
+  const [productImageUploading, setProductImageUploading] = useState(false);
+  const [productImageUploadProgress, setProductImageUploadProgress] = useState(0);
+
+  // Settings tab state
+  const [appConfig, setAppConfig] = useState({});
   const [serviceCitiesText, setServiceCitiesText] = useState('');
   const [servicePincodesText, setServicePincodesText] = useState('');
   const [payoutDelayHours, setPayoutDelayHours] = useState('24');
 
-  useEffect(() => {
-    const savedSession = window.localStorage.getItem('bazaarAdminSession');
-    if (savedSession) {
+  const saveServiceConfig = async (e) => {
+    e.preventDefault();
+    try {
+      const cities = serviceCitiesText.split(',').map(c => c.trim()).filter(Boolean);
+      const pincodes = servicePincodesText.split(',').map(p => p.trim()).filter(Boolean);
+      await updateDoc(doc(db, 'app_config', 'main'), {
+        serviceCities: cities,
+        servicePincodes: pincodes,
+        payoutDelayHours: parseInt(payoutDelayHours, 10) || 24
+      });
+      alert('Settings saved successfully!');
+    } catch (e) {
       try {
-        const sessionUser = JSON.parse(savedSession);
-        if (sessionUser?.email && sessionUser?.role === 'Admin') {
-          setAuthUser(sessionUser);
-        }
-      } catch (error) {
-        console.warn('Invalid admin session:', error);
-        window.localStorage.removeItem('bazaarAdminSession');
+        const cities = serviceCitiesText.split(',').map(c => c.trim()).filter(Boolean);
+        const pincodes = servicePincodesText.split(',').map(p => p.trim()).filter(Boolean);
+        await setDoc(doc(db, 'app_config', 'main'), {
+          serviceCities: cities,
+          servicePincodes: pincodes,
+          payoutDelayHours: parseInt(payoutDelayHours, 10) || 24
+        }, { merge: true });
+        alert('Settings saved successfully!');
+      } catch (err) {
+        alert(`Error saving settings: ${err.message}`);
       }
     }
-    setAuthLoading(false);
+  };
+
+  // Coupon management states
+  const [coupons, setCoupons] = useState([]);
+  const [showCouponModal, setShowCouponModal] = useState(false);
+  const [newCouponCode, setNewCouponCode] = useState('');
+  const [newCouponDiscount, setNewCouponDiscount] = useState('');
+  const [newCouponMinOrder, setNewCouponMinOrder] = useState('');
+  const [newCouponMaxDiscount, setNewCouponMaxDiscount] = useState('');
+  const [newCouponDesc, setNewCouponDesc] = useState('');
+  const [newCouponActive, setNewCouponActive] = useState(true);
+  // Banners tab state
+  const [banners, setBanners] = useState([]);
+  const [showBannerModal, setShowBannerModal] = useState(false);
+  const [newBannerLabel, setNewBannerLabel] = useState('');
+  const [newBannerTitle, setNewBannerTitle] = useState('');
+  const [newBannerDesc, setNewBannerDesc] = useState('');
+  const [newBannerTargetCat, setNewBannerTargetCat] = useState('All');
+  const [newBannerGradientStart, setNewBannerGradientStart] = useState('#1B5E20');
+  const [newBannerGradientEnd, setNewBannerGradientEnd] = useState('#A5D6A7');
+  const [newBannerSortOrder, setNewBannerSortOrder] = useState('0');
+  const [newBannerActive, setNewBannerActive] = useState(true);
+  // On app load: restore session from localStorage AND re-authenticate Firebase Auth
+  // so Firestore rules (request.auth != null) work after page refresh
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      const savedSession = window.localStorage.getItem('bazaarAdminSession');
+      if (firebaseUser && savedSession) {
+        // Firebase Auth is restored + we have a local session — trust both
+        try {
+          const sessionUser = JSON.parse(savedSession);
+          if (sessionUser?.email && sessionUser?.role === 'Admin') {
+            setAuthUser(sessionUser);
+          }
+        } catch (e) {
+          window.localStorage.removeItem('bazaarAdminSession');
+        }
+      } else if (savedSession && !firebaseUser) {
+        // We have a local session but Firebase Auth expired — clear it
+        window.localStorage.removeItem('bazaarAdminSession');
+      }
+      setAuthLoading(false);
+    });
+
+    return () => unsubscribe();
   }, []);
 
   useEffect(() => {
@@ -139,6 +204,7 @@ function App() {
       setUsers([]);
       setProducts([]);
       setOrders([]);
+      setCoupons([]);
       setLoading(false);
       return undefined;
     }
@@ -147,14 +213,17 @@ function App() {
       setUsers(defaultUsers);
       setProducts(defaultProducts);
       setOrders(defaultOrders);
+      setCoupons([]);
       setLoading(false);
       return undefined;
     }
 
-    let unsubscribeUsers = () => { };
+     let unsubscribeUsers = () => { };
     let unsubscribeProducts = () => { };
     let unsubscribeOrders = () => { };
     let unsubscribeConfig = () => { };
+    let unsubscribeCoupons = () => { };
+    let unsubscribeBanners = () => { };
 
     try {
       setLoading(true);
@@ -197,6 +266,29 @@ function App() {
           setLoading(false);
         }
       );
+
+      unsubscribeCoupons = onSnapshot(
+        collection(db, 'coupons'),
+        snapshot => {
+          const list = snapshot.docs.map(couponDoc => ({ ...couponDoc.data(), code: couponDoc.data().code || couponDoc.id }));
+          setCoupons(list);
+        },
+        err => {
+          console.warn('Firestore coupons sync failed:', err);
+        }
+      );
+
+      unsubscribeBanners = onSnapshot(
+        collection(db, 'banners'),
+        snapshot => {
+          const list = snapshot.docs.map(bannerDoc => ({ ...bannerDoc.data(), id: bannerDoc.id }));
+          setBanners(list.sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0)));
+        },
+        err => {
+          console.warn('Firestore banners sync failed:', err);
+        }
+      );
+
       unsubscribeConfig = onSnapshot(doc(db, 'app_config', 'main'), configDoc => {
         const config = configDoc.exists() ? configDoc.data() : {};
         setAppConfig(config);
@@ -205,7 +297,7 @@ function App() {
         setPayoutDelayHours(String(config.payoutDelayHours ?? 24));
       });
     } catch (error) {
-      console.error('Firebase init failed, switching to mock:', error);
+      console.warn('Firebase snapshot initialization error:', error);
       setDbError('Invalid Firebase configuration.');
       setLoading(false);
     }
@@ -215,6 +307,8 @@ function App() {
       unsubscribeProducts();
       unsubscribeOrders();
       unsubscribeConfig();
+      unsubscribeCoupons();
+      unsubscribeBanners();
     };
   }, [authUser, useMockData]);
 
@@ -259,21 +353,48 @@ function App() {
     setLoginSubmitting(true);
     try {
       const email = loginEmail.trim().toLowerCase();
+
+      // Step 1: Sign into Firebase Auth so Firestore rules (request.auth != null) work
+      let firebaseAuthSuccess = false;
+      try {
+        await signInWithEmailAndPassword(auth, email, loginPassword);
+        firebaseAuthSuccess = true;
+      } catch (signInErr) {
+        // Maybe user doesn't exist in Firebase Auth yet — try creating them
+        try {
+          const { createUserWithEmailAndPassword } = await import('firebase/auth');
+          await createUserWithEmailAndPassword(auth, email, loginPassword);
+          firebaseAuthSuccess = true;
+          console.log('Auto-created Firebase Auth account for admin.');
+        } catch (createErr) {
+          console.warn('Firebase Auth failed:', createErr.message);
+        }
+      }
+
+      if (!firebaseAuthSuccess) {
+        setLoginError('Firebase Authentication failed. Please add this email manually in Firebase Console → Authentication → Users.');
+        return;
+      }
+
+      // Step 2: Verify admin role from Firestore (now auth is set, rules will pass)
       const adminSnap = await getDoc(doc(db, 'users', email));
 
       if (!adminSnap.exists()) {
-        setLoginError('No admin user found with this email.');
+        setLoginError('No admin user found in Firestore with this email. Please seed the database first.');
+        await firebaseSignOut(auth).catch(() => {});
         return;
       }
 
       const adminUser = { ...adminSnap.data(), email: adminSnap.id || email };
       if (adminUser.role !== 'Admin') {
-        setLoginError('This account is not marked as Admin.');
+        setLoginError(`This account is registered as "${adminUser.role}", not Admin.`);
+        await firebaseSignOut(auth).catch(() => {});
         return;
       }
 
       if ((adminUser.password || '') !== loginPassword) {
         setLoginError('Wrong password.');
+        await firebaseSignOut(auth).catch(() => {});
         return;
       }
 
@@ -293,6 +414,7 @@ function App() {
 
   const handleLogout = () => {
     window.localStorage.removeItem('bazaarAdminSession');
+    firebaseSignOut(auth).catch(() => {});
     setAuthUser(null);
     setUseMockData(false);
     setDbError(null);
@@ -381,6 +503,58 @@ function App() {
     }
   };
 
+  const approveProfileEditRequest = async (email, user) => {
+    const payload = {
+      name: user.requestedName || user.name,
+      shopName: user.requestedShopName || user.shopName,
+      shopAddress: user.requestedShopAddress || user.shopAddress,
+      shopAddressLat: user.requestedShopAddress ? user.requestedShopAddressLat : user.shopAddressLat || 0,
+      shopAddressLng: user.requestedShopAddress ? user.requestedShopAddressLng : user.shopAddressLng || 0,
+
+      deliveryMobile: user.requestedDeliveryMobile || user.deliveryMobile || "",
+      deliveryVehicleType: user.requestedDeliveryVehicleType || user.deliveryVehicleType || "",
+      deliveryVehicleNumber: user.requestedDeliveryVehicleNumber || user.deliveryVehicleNumber || "",
+      deliveryEmergencyContact: user.requestedDeliveryEmergencyContact || user.deliveryEmergencyContact || "",
+      deliveryAddress: user.requestedDeliveryAddress || user.deliveryAddress || "",
+      deliveryAddressLat: user.requestedDeliveryAddress ? user.requestedDeliveryAddressLat : user.deliveryAddressLat || 0,
+      deliveryAddressLng: user.requestedDeliveryAddress ? user.requestedDeliveryAddressLng : user.deliveryAddressLng || 0,
+
+      editRequestPending: false,
+      requestedName: "",
+      requestedShopName: "",
+      requestedShopAddress: "",
+      requestedShopAddressLat: 0,
+      requestedShopAddressLng: 0,
+      requestedDeliveryMobile: "",
+      requestedDeliveryVehicleType: "",
+      requestedDeliveryVehicleNumber: "",
+      requestedDeliveryEmergencyContact: "",
+      requestedDeliveryAddress: "",
+      requestedDeliveryAddressLat: 0,
+      requestedDeliveryAddressLng: 0
+    };
+    await patchUser(email, payload);
+  };
+
+  const rejectProfileEditRequest = async (email) => {
+    const payload = {
+      editRequestPending: false,
+      requestedName: "",
+      requestedShopName: "",
+      requestedShopAddress: "",
+      requestedShopAddressLat: 0,
+      requestedShopAddressLng: 0,
+      requestedDeliveryMobile: "",
+      requestedDeliveryVehicleType: "",
+      requestedDeliveryVehicleNumber: "",
+      requestedDeliveryEmergencyContact: "",
+      requestedDeliveryAddress: "",
+      requestedDeliveryAddressLat: 0,
+      requestedDeliveryAddressLng: 0
+    };
+    await patchUser(email, payload);
+  };
+
   const toggleSellerVerification = (email, currentStatus) => patchUser(email, {
     isSellerVerified: !currentStatus,
     isSellerVerificationPending: false
@@ -428,13 +602,77 @@ function App() {
     }
   };
 
+  // Upload image to Cloudinary using unsigned upload preset
+  const uploadToCloudinary = (file) => {
+    return new Promise((resolve, reject) => {
+      const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
+      const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
+      const folder = import.meta.env.VITE_CLOUDINARY_FOLDER || '';
+
+      if (!cloudName || !uploadPreset) {
+        reject(new Error('Cloudinary is not configured. Add VITE_CLOUDINARY_CLOUD_NAME and VITE_CLOUDINARY_UPLOAD_PRESET to .env'));
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('upload_preset', uploadPreset);
+      formData.append('public_id', `admin_product_${Date.now()}`);
+      if (folder) formData.append('folder', folder);
+
+      // Use XMLHttpRequest to track upload progress
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`);
+
+      xhr.upload.addEventListener('progress', (e) => {
+        if (e.lengthComputable) {
+          const progress = Math.round((e.loaded / e.total) * 100);
+          setProductImageUploadProgress(progress);
+        }
+      });
+
+      xhr.onload = () => {
+        try {
+          const response = JSON.parse(xhr.responseText);
+          if (xhr.status >= 200 && xhr.status < 300 && response.secure_url) {
+            resolve(response.secure_url);
+          } else {
+            reject(new Error(response.error?.message || 'Cloudinary upload failed'));
+          }
+        } catch (e) {
+          reject(new Error('Invalid response from Cloudinary'));
+        }
+      };
+
+      xhr.onerror = () => reject(new Error('Network error during upload'));
+      xhr.send(formData);
+    });
+  };
+
+  const handleProductImageChange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setNewProductImageFile(file);
+    setNewProductImagePreview(URL.createObjectURL(file));
+    setProductImageUploading(true);
+    setProductImageUploadProgress(0);
+    try {
+      const url = await uploadToCloudinary(file);
+      setNewProductImageUrl(url);
+    } catch (err) {
+      alert(`Image upload failed: ${err.message}`);
+      setNewProductImageUrl('');
+    } finally {
+      setProductImageUploading(false);
+    }
+  };
+
   const handleCreateProduct = async e => {
     e.preventDefault();
     const priceNum = parseFloat(newProductPrice);
     const origPriceNum = parseFloat(newProductOrigPrice);
-    const stockNum = Number(newProductStock);
-    if (!newProductName || Number.isNaN(priceNum) || Number.isNaN(origPriceNum) || !Number.isInteger(stockNum) || stockNum < 0) {
-      alert('Please fill in valid name, prices, and mandatory stock quantity.');
+    if (!newProductName || Number.isNaN(priceNum) || Number.isNaN(origPriceNum)) {
+      alert('Please fill in valid name and numeric prices.');
       return;
     }
 
@@ -448,11 +686,11 @@ function App() {
       rating: 4.5,
       category: newProductCat || 'General',
       description: newProductDesc,
-      imageUrlName: 'img_hero_banner',
+      imageUrlName: newProductImageUrl || '',
       isFeatured: newProductFeatured,
       sellerEmail: newProductSeller || 'admin@bazaar.com',
       extraImages: '',
-      stockQuantity: stockNum
+      stockQuantity: 100
     };
 
     if (useMockData) {
@@ -478,26 +716,11 @@ function App() {
     setNewProductCat('');
     setNewProductDesc('');
     setNewProductFeatured(false);
-    setNewProductStock('');
-  };
-
-  const saveServiceConfig = async event => {
-    event.preventDefault();
-    const splitValues = value => value.split(',').map(item => item.trim()).filter(Boolean);
-    const payload = {
-      ...appConfig,
-      serviceCities: splitValues(serviceCitiesText),
-      servicePincodes: splitValues(servicePincodesText).map(value => value.replace(/\D/g, '')).filter(Boolean),
-      payoutDelayHours: Math.max(0, Number.parseInt(payoutDelayHours, 10) || 0)
-    };
-    if (useMockData) {
-      setAppConfig(payload);
-      alert('Configuration saved in demo mode.');
-      return;
-    }
-    await setDoc(doc(db, 'app_config', 'main'), payload, { merge: true });
-    setDbStatusMsg('Service area and automatic payout schedule saved.');
-    setTimeout(() => setDbStatusMsg(''), 4000);
+    setNewProductImageFile(null);
+    setNewProductImagePreview('');
+    setNewProductImageUrl('');
+    setProductImageUploading(false);
+    setProductImageUploadProgress(0);
   };
 
   const updateOrder = async (orderId, payload) => {
@@ -510,6 +733,150 @@ function App() {
     } catch (e) {
       alert(`Error updating order: ${e.message}`);
     }
+  };
+
+  const toggleCouponActive = async (code, currentStatus) => {
+    if (useMockData) {
+      setCoupons(coupons.map(c => (c.code === code ? { ...c, isActive: !currentStatus } : c)));
+      return;
+    }
+    try {
+      await updateDoc(doc(db, 'coupons', code), { isActive: !currentStatus });
+    } catch (e) {
+      alert(`Error updating coupon: ${e.message}`);
+    }
+  };
+
+  const deleteCoupon = async code => {
+    if (!window.confirm(`Are you sure you want to delete coupon ${code}?`)) return;
+    if (useMockData) {
+      setCoupons(coupons.filter(c => c.code !== code));
+      return;
+    }
+    try {
+      await deleteDoc(doc(db, 'coupons', code));
+    } catch (e) {
+      alert(`Error deleting coupon: ${e.message}`);
+    }
+  };
+
+  const handleCreateCoupon = async e => {
+    e.preventDefault();
+    const discountPercent = parseInt(newCouponDiscount, 10);
+    const minOrderAmount = parseFloat(newCouponMinOrder || 0);
+    const maxDiscount = parseFloat(newCouponMaxDiscount || 999999);
+
+    if (!newCouponCode.trim() || Number.isNaN(discountPercent) || discountPercent <= 0 || discountPercent > 100) {
+      alert('Please fill in a valid code and discount percent (1-100).');
+      return;
+    }
+
+    const codeUpper = newCouponCode.trim().toUpperCase();
+
+    const newCoup = {
+      code: codeUpper,
+      discountPercent,
+      description: newCouponDesc,
+      isActive: newCouponActive,
+      minOrderAmount,
+      maxDiscount
+    };
+
+    if (useMockData) {
+      setCoupons([...coupons, newCoup]);
+      setShowCouponModal(false);
+      resetCouponForm();
+      return;
+    }
+
+    try {
+      await setDoc(doc(db, 'coupons', codeUpper), newCoup);
+      setShowCouponModal(false);
+      resetCouponForm();
+    } catch (e) {
+      alert(`Error creating coupon: ${e.message}`);
+    }
+  };
+
+  const resetCouponForm = () => {
+    setNewCouponCode('');
+    setNewCouponDiscount('');
+    setNewCouponMinOrder('');
+    setNewCouponMaxDiscount('');
+    setNewCouponDesc('');
+    setNewCouponActive(true);
+  };
+
+  const toggleBannerActive = async (id, currentStatus) => {
+    if (useMockData) {
+      setBanners(banners.map(b => (b.id === id ? { ...b, isActive: !currentStatus } : b)));
+      return;
+    }
+    try {
+      await updateDoc(doc(db, 'banners', id), { isActive: !currentStatus });
+    } catch (e) {
+      alert(`Error updating banner: ${e.message}`);
+    }
+  };
+
+  const deleteBanner = async id => {
+    if (!window.confirm(`Are you sure you want to delete this banner?`)) return;
+    if (useMockData) {
+      setBanners(banners.filter(b => b.id !== id));
+      return;
+    }
+    try {
+      await deleteDoc(doc(db, 'banners', id));
+    } catch (e) {
+      alert(`Error deleting banner: ${e.message}`);
+    }
+  };
+
+  const handleCreateBanner = async e => {
+    e.preventDefault();
+    if (!newBannerTitle.trim() || !newBannerLabel.trim()) {
+      alert('Please fill in a valid title and label.');
+      return;
+    }
+
+    const bannerId = `banner_${Date.now()}`;
+    const newBann = {
+      id: bannerId,
+      label: newBannerLabel.trim(),
+      title: newBannerTitle.trim(),
+      description: newBannerDesc.trim(),
+      targetCategory: newBannerTargetCat,
+      gradientStart: newBannerGradientStart.trim() || '#1B5E20',
+      gradientEnd: newBannerGradientEnd.trim() || '#A5D6A7',
+      sortOrder: parseInt(newBannerSortOrder, 10) || 0,
+      isActive: newBannerActive
+    };
+
+    if (useMockData) {
+      setBanners([...banners, newBann]);
+      setShowBannerModal(false);
+      resetBannerForm();
+      return;
+    }
+
+    try {
+      await setDoc(doc(db, 'banners', bannerId), newBann);
+      setShowBannerModal(false);
+      resetBannerForm();
+    } catch (e) {
+      alert(`Error creating banner: ${e.message}`);
+    }
+  };
+
+  const resetBannerForm = () => {
+    setNewBannerLabel('');
+    setNewBannerTitle('');
+    setNewBannerDesc('');
+    setNewBannerTargetCat('All');
+    setNewBannerGradientStart('#1B5E20');
+    setNewBannerGradientEnd('#A5D6A7');
+    setNewBannerSortOrder('0');
+    setNewBannerActive(true);
   };
 
   if (authLoading) {
@@ -576,7 +943,9 @@ function App() {
             ['users', UsersIcon, 'Users'],
             ['products', ShoppingBag, 'Products'],
             ['orders', FileText, 'Orders'],
-            ['settings', Settings, 'Service Settings']
+            ['coupons', Ticket, 'Coupons'],
+            ['banners', Sparkles, 'Banners'],
+            ['settings', Settings, 'Serviceable Areas']
           ].map(([tab, Icon, label]) => (
             <button key={tab} className={`nav-item ${activeTab === tab ? 'active' : ''}`} onClick={() => setActiveTab(tab)}>
               <Icon size={20} />
@@ -635,13 +1004,17 @@ function App() {
               {activeTab === 'users' && 'User & Account Management'}
               {activeTab === 'products' && 'Inventory Products Catalog'}
               {activeTab === 'orders' && 'Order Transactions'}
-              {activeTab === 'settings' && 'Service Area & Payout Settings'}
+              {activeTab === 'coupons' && 'Coupon Directory'}
+              {activeTab === 'banners' && 'Marketing Banners'}
+              {activeTab === 'settings' && 'Serviceable Area & Payout Settings'}
             </h1>
             <p>
               {activeTab === 'dashboard' && 'Monitor marketplace stats, verification queues, revenue, and data tools.'}
               {activeTab === 'users' && 'Review buyers, sellers, delivery partners, admin accounts, and verification documents.'}
               {activeTab === 'products' && 'Add new items, manage featured products, and review seller inventory.'}
               {activeTab === 'orders' && 'Update workflow statuses, delivery assignment, payment details, and order flags.'}
+              {activeTab === 'coupons' && 'Create, configure, and monitor discount promo coupons.'}
+              {activeTab === 'banners' && 'Manage rotating carousel billboard advertising banners shown in the mobile app.'}
               {activeTab === 'settings' && 'Control eligible cities, pincodes, and automatic Razorpay payout timing.'}
             </p>
           </div>
@@ -670,26 +1043,26 @@ function App() {
                   <Metric title="Pending Reviews" value={pendingSellersCount + pendingPartnersCount} icon={AlertTriangle} compact />
                 </div>
 
-                {/*
                 <div className="glass-panel section-card data-tools">
                   <div className="section-header">
-                    <h2><Database size={20} /> Firebase Database Tools</h2>
+                    <h2><Sparkles size={20} /> Database Tools</h2>
                   </div>
-                  <p>Seed Firestore with app-ready sample data, export a JSON backup, or restore a previous backup.</p>
+                  <p style={{fontSize:'13px', color:'var(--text-muted)', marginBottom:'12px'}}>
+                    Seed Firestore with default sample data for testing, or export/import a JSON backup.
+                  </p>
                   <div className="toolbar-row">
-                    <button className="btn btn-primary" onClick={seedFirestoreDatabase} disabled={useMockData}>
+                    <button className="btn btn-primary" onClick={_seedFirestoreDatabase}>
                       <Sparkles size={16} /> Seed Default Data
                     </button>
-                    <button className="btn btn-secondary" onClick={exportDatabaseToJson}>
-                      <Download size={16} /> Export JSON
+                    <button className="btn btn-secondary" onClick={_exportDatabaseToJson}>
+                      Export JSON
                     </button>
-                    <button className="btn btn-secondary" onClick={() => fileInputRef.current.click()} disabled={useMockData}>
-                      <Upload size={16} /> Import JSON
-                    </button>
-                    <input type="file" ref={fileInputRef} onChange={importDatabaseFromJson} accept=".json" hidden />
+                    <label className="btn btn-secondary" style={{cursor:'pointer'}}>
+                      Import JSON
+                      <input type="file" onChange={_importDatabaseFromJson} accept=".json" hidden />
+                    </label>
                   </div>
                 </div>
-                */}
 
                 <div className="dashboard-grid">
                   <RecentOrders orders={orders} setActiveTab={setActiveTab} />
@@ -775,9 +1148,101 @@ function App() {
                                     <DetailLine label="PAN" value={user.sellerPanCard} />
                                     <DetailLine label="GST" value={user.sellerGstNumber} />
                                     <DetailLine label="Emergency contact" value={user.deliveryEmergencyContact} />
-                                    <DetailLine label="Edit request" value={user.editRequestPending ? 'Pending' : ''} />
-                                    <DetailLine label="Requested name" value={user.requestedName} />
+                                    <DetailLine label="Edit request" value={user.editRequestPending ? 'Pending Approval' : 'None'} />
                                   </div>
+
+                                  {user.sellerVideoUrl && (
+                                    <div style={{ marginTop: '16px' }}>
+                                      <p style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#666', fontWeight: 'bold' }}>Seller Introduction Video:</p>
+                                      <video src={user.sellerVideoUrl} controls width="320" style={{ borderRadius: '8px', border: '1px solid #ddd' }} />
+                                    </div>
+                                  )}
+
+                                  {(user.sellerShopPhoto || user.sellerOwnerPhoto || user.deliveryPhoto) && (
+                                    <div style={{ marginTop: '16px', display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                                      {user.sellerShopPhoto && (
+                                        <div>
+                                          <p style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#666', fontWeight: 'bold' }}>Shop Image:</p>
+                                          <img src={user.sellerShopPhoto} alt="Shop" style={{ width: '120px', height: '120px', objectFit: 'cover', borderRadius: '8px', border: '1px solid #ddd' }} />
+                                        </div>
+                                      )}
+                                      {user.sellerOwnerPhoto && (
+                                        <div>
+                                          <p style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#666', fontWeight: 'bold' }}>Owner Selfie/Photo:</p>
+                                          <img src={user.sellerOwnerPhoto} alt="Owner" style={{ width: '120px', height: '120px', objectFit: 'cover', borderRadius: '8px', border: '1px solid #ddd' }} />
+                                        </div>
+                                      )}
+                                      {user.deliveryPhoto && (
+                                        <div>
+                                          <p style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#666', fontWeight: 'bold' }}>Delivery Partner Photo:</p>
+                                          <img src={user.deliveryPhoto} alt="Delivery Partner" style={{ width: '120px', height: '120px', objectFit: 'cover', borderRadius: '8px', border: '1px solid #ddd' }} />
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+
+                                  {user.editRequestPending && (
+                                    <div className="edit-request-box" style={{
+                                      marginTop: '16px',
+                                      padding: '16px',
+                                      borderRadius: '12px',
+                                      background: 'rgba(232, 245, 233, 0.4)',
+                                      border: '1px solid #c8e6c9',
+                                      display: 'flex',
+                                      flexDirection: 'column',
+                                      gap: '12px'
+                                    }}>
+                                      <h4 style={{ margin: 0, color: '#2e7d32', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                        ⏳ {user.role === 'Seller' ? 'Seller' : 'Delivery Partner'} Profile Edit Request Pending Approval
+                                      </h4>
+                                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                                        <div>
+                                          <p style={{ margin: '0 0 4px 0', fontSize: '12px', color: '#666', fontWeight: 'bold' }}>Current Profile Info:</p>
+                                          {user.role === 'Seller' ? (
+                                            <div style={{ fontSize: '13px' }}>
+                                              <div><strong>Owner Name:</strong> {user.name}</div>
+                                              <div><strong>Shop Name:</strong> {user.shopName}</div>
+                                              <div><strong>Shop Address:</strong> {user.shopAddress}</div>
+                                            </div>
+                                          ) : (
+                                            <div style={{ fontSize: '13px' }}>
+                                              <div><strong>Full Name:</strong> {user.name}</div>
+                                              <div><strong>Mobile:</strong> {user.deliveryMobile}</div>
+                                              <div><strong>Vehicle:</strong> {user.deliveryVehicleType} ({user.deliveryVehicleNumber})</div>
+                                              <div><strong>Emergency Contact:</strong> {user.deliveryEmergencyContact}</div>
+                                              <div><strong>Address:</strong> {user.deliveryAddress}</div>
+                                            </div>
+                                          )}
+                                        </div>
+                                        <div>
+                                          <p style={{ margin: '0 0 4px 0', fontSize: '12px', color: '#2e7d32', fontWeight: 'bold' }}>Requested Profile Updates:</p>
+                                          {user.role === 'Seller' ? (
+                                            <div style={{ fontSize: '13px', color: '#1b5e20' }}>
+                                              <div><strong>Owner Name:</strong> {user.requestedName || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                              <div><strong>Shop Name:</strong> {user.requestedShopName || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                              <div><strong>Shop Address:</strong> {user.requestedShopAddress || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                            </div>
+                                          ) : (
+                                            <div style={{ fontSize: '13px', color: '#1b5e20' }}>
+                                              <div><strong>Full Name:</strong> {user.requestedName || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                              <div><strong>Mobile:</strong> {user.requestedDeliveryMobile || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                              <div><strong>Vehicle:</strong> {user.requestedDeliveryVehicleType ? `${user.requestedDeliveryVehicleType} (${user.requestedDeliveryVehicleNumber || 'N/A'})` : <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                              <div><strong>Emergency Contact:</strong> {user.requestedDeliveryEmergencyContact || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                              <div><strong>Address:</strong> {user.requestedDeliveryAddress || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+                                      <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+                                        <button className="btn btn-primary btn-sm" onClick={() => approveProfileEditRequest(user.email, user)}>
+                                          Approve Profile Changes
+                                        </button>
+                                        <button className="btn btn-secondary btn-sm" onClick={() => rejectProfileEditRequest(user.email)}>
+                                          Decline Profile Changes
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
                                 </td>
                               </tr>
                             )}
@@ -890,6 +1355,166 @@ function App() {
               </div>
             )}
 
+            {activeTab === 'coupons' && (
+              <div className="glass-panel section-card">
+                <div className="section-header stacked-section-header">
+                  <h2>Coupon Directory</h2>
+                  <div className="toolbar-row">
+                    <button className="btn btn-primary" onClick={() => setShowCouponModal(true)}>
+                      <Plus size={16} /> Create Coupon
+                    </button>
+                  </div>
+                </div>
+
+                {coupons.length === 0 ? (
+                  <Empty icon={Ticket} title="No Coupons Found" text="Create coupons to offer discounts on checkout." />
+                ) : (
+                  <div className="table-container">
+                    <table className="modern-table">
+                      <thead>
+                        <tr>
+                          <th>Code</th>
+                          <th>Discount</th>
+                          <th>Min Order</th>
+                          <th>Max Discount</th>
+                          <th>Description</th>
+                          <th>Status</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {coupons.map(coupon => (
+                          <tr key={coupon.code}>
+                            <td>
+                              <p className="accent-text" style={{ fontWeight: 'bold' }}>{coupon.code}</p>
+                            </td>
+                            <td>
+                              <p>{coupon.discountPercent}% OFF</p>
+                            </td>
+                            <td>
+                              <p>₹{coupon.minOrderAmount || 0}</p>
+                            </td>
+                            <td>
+                              <p>{coupon.maxDiscount && coupon.maxDiscount < 999999 ? `₹${coupon.maxDiscount}` : 'Unlimited'}</p>
+                            </td>
+                            <td className="muted-cell">
+                              <p>{coupon.description || 'No description provided'}</p>
+                            </td>
+                            <td>
+                              <span className={`status-badge ${coupon.isActive ? 'verified' : 'rejected'}`}>
+                                {coupon.isActive ? 'Active' : 'Inactive'}
+                              </span>
+                            </td>
+                            <td>
+                              <div className="actions-row">
+                                <button className={`btn btn-sm ${coupon.isActive ? 'btn-secondary' : 'btn-primary'}`} onClick={() => toggleCouponActive(coupon.code, coupon.isActive)}>
+                                  {coupon.isActive ? 'Deactivate' : 'Activate'}
+                                </button>
+                                <button className="btn btn-danger btn-sm" onClick={() => deleteCoupon(coupon.code)}>
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {activeTab === 'banners' && (
+              <div className="glass-panel section-card">
+                <div className="section-header stacked-section-header">
+                  <h2>Banner Directory</h2>
+                  <div className="toolbar-row">
+                    <button className="btn btn-primary" onClick={() => setShowBannerModal(true)}>
+                      <Plus size={16} /> Create Banner
+                    </button>
+                  </div>
+                </div>
+
+                {banners.length === 0 ? (
+                  <Empty icon={Sparkles} title="No Banners Found" text="Create billboard banners to advertise products, category discounts, and special launch events on the mobile app home screen." />
+                ) : (
+                  <div className="table-container">
+                    <table className="modern-table">
+                      <thead>
+                        <tr>
+                          <th>Preview</th>
+                          <th>Label</th>
+                          <th>Title</th>
+                          <th>Description</th>
+                          <th>Target Category</th>
+                          <th>Sort Order</th>
+                          <th>Status</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {banners.map(banner => {
+                          const bgGradient = `linear-gradient(135deg, ${banner.gradientStart || '#1B5E20'}, ${banner.gradientEnd || '#A5D6A7'})`;
+                          return (
+                            <tr key={banner.id}>
+                              <td>
+                                <div style={{
+                                  width: '120px',
+                                  height: '60px',
+                                  background: bgGradient,
+                                  borderRadius: '8px',
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  justifyContent: 'center',
+                                  padding: '8px',
+                                  boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                                  color: '#ffffff',
+                                  overflow: 'hidden'
+                                }}>
+                                  <span style={{ fontSize: '7px', background: '#FFD700', color: '#000000', fontWeight: '900', padding: '1px 3px', borderRadius: '3px', alignSelf: 'flex-start' }}>{banner.label}</span>
+                                  <span style={{ fontSize: '9px', fontWeight: 'bold', marginTop: '2px', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>{banner.title}</span>
+                                </div>
+                              </td>
+                              <td>
+                                <p className="accent-text" style={{ fontWeight: 'bold' }}>{banner.label}</p>
+                              </td>
+                              <td>
+                                <p style={{ fontWeight: '600' }}>{banner.title}</p>
+                              </td>
+                              <td className="muted-cell">
+                                <p>{banner.description || 'No description'}</p>
+                              </td>
+                              <td>
+                                <span style={{ textTransform: 'capitalize', fontWeight: 'bold', fontSize: '12px' }}>{banner.targetCategory || 'All'}</span>
+                              </td>
+                              <td>
+                                <p>{banner.sortOrder || 0}</p>
+                              </td>
+                              <td>
+                                <span className={`status-badge ${banner.isActive ? 'verified' : 'rejected'}`}>
+                                  {banner.isActive ? 'Active' : 'Inactive'}
+                                </span>
+                              </td>
+                              <td>
+                                <div className="actions-row">
+                                  <button className={`btn btn-sm ${banner.isActive ? 'btn-secondary' : 'btn-primary'}`} onClick={() => toggleBannerActive(banner.id, banner.isActive)}>
+                                    {banner.isActive ? 'Deactivate' : 'Activate'}
+                                  </button>
+                                  <button className="btn btn-danger btn-sm" onClick={() => deleteBanner(banner.id)}>
+                                    <Trash2 size={14} />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
             {activeTab === 'settings' && (
               <div className="glass-panel section-card">
                 <div className="section-header"><h2>Fulfilment Configuration</h2></div>
@@ -940,9 +1565,45 @@ function App() {
                 <label className="form-label">Seller Email Owner</label>
                 <input type="email" className="form-control" value={newProductSeller} onChange={e => setNewProductSeller(e.target.value)} />
               </div>
-              <div className="form-group">
-                <label className="form-label">Stock Quantity</label>
-                <input type="number" min="0" step="1" className="form-control" value={newProductStock} onChange={e => setNewProductStock(e.target.value)} required />
+              <div className="form-group full-width">
+                <label className="form-label">Product Image (Firebase Storage)</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                  <label
+                    htmlFor="product-image-upload"
+                    className="btn btn-secondary btn-sm"
+                    style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    <Plus size={14} />
+                    {newProductImageFile ? 'Change Image' : 'Upload Image'}
+                  </label>
+                  <input
+                    id="product-image-upload"
+                    type="file"
+                    accept="image/*"
+                    style={{ display: 'none' }}
+                    onChange={handleProductImageChange}
+                  />
+                  {productImageUploading && (
+                    <span style={{ fontSize: '12px', color: 'var(--color-accent)' }}>
+                      <RefreshCw size={12} style={{ animation: 'spin 1.5s linear infinite', marginRight: '4px' }} />
+                      Uploading {productImageUploadProgress}%...
+                    </span>
+                  )}
+                  {newProductImageUrl && !productImageUploading && (
+                    <span style={{ fontSize: '11px', color: '#4caf50', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <CheckCircle size={12} /> Image uploaded to Firebase Storage
+                    </span>
+                  )}
+                </div>
+                {newProductImagePreview && (
+                  <div style={{ marginTop: '10px' }}>
+                    <img
+                      src={newProductImagePreview}
+                      alt="Preview"
+                      style={{ width: '120px', height: '120px', objectFit: 'cover', borderRadius: '10px', border: '2px solid var(--color-accent)' }}
+                    />
+                  </div>
+                )}
               </div>
               <div className="form-group full-width">
                 <label className="form-label">Product Description</label>
@@ -954,7 +1615,107 @@ function App() {
               </div>
               <div className="form-actions">
                 <button type="button" className="btn btn-secondary" onClick={() => setShowProductModal(false)}>Cancel</button>
-                <button type="submit" className="btn btn-primary">Publish Item</button>
+                <button type="submit" className="btn btn-primary" disabled={productImageUploading}>
+                  {productImageUploading ? 'Uploading Image...' : 'Publish Item'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showCouponModal && (
+        <div className="modal-overlay">
+          <div className="glass-panel modal-content">
+            <button className="close-btn" onClick={() => setShowCouponModal(false)}>x</button>
+            <h2 className="modal-title"><Plus size={22} color="var(--color-accent)" /> Create New Coupon</h2>
+            <form onSubmit={handleCreateCoupon} className="form-grid">
+              <div className="form-group">
+                <label className="form-label">Coupon Code</label>
+                <input type="text" className="form-control" value={newCouponCode} onChange={e => setNewCouponCode(e.target.value)} placeholder="e.g. BAZAAR50" required />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Discount Percent (1-100)</label>
+                <input type="number" min="1" max="100" className="form-control" value={newCouponDiscount} onChange={e => setNewCouponDiscount(e.target.value)} required />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Min Order Amount (₹)</label>
+                <input type="number" min="0" step="0.01" className="form-control" value={newCouponMinOrder} onChange={e => setNewCouponMinOrder(e.target.value)} placeholder="0" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Max Discount Amount (₹)</label>
+                <input type="number" min="0" step="0.01" className="form-control" value={newCouponMaxDiscount} onChange={e => setNewCouponMaxDiscount(e.target.value)} placeholder="Unlimited" />
+              </div>
+              <div className="form-group full-width">
+                <label className="form-label">Description</label>
+                <input type="text" className="form-control" value={newCouponDesc} onChange={e => setNewCouponDesc(e.target.value)} placeholder="Description of the coupon" />
+              </div>
+              <div className="form-group full-width checkbox-row">
+                <input type="checkbox" id="coupon-active-check" checked={newCouponActive} onChange={e => setNewCouponActive(e.target.checked)} />
+                <label htmlFor="coupon-active-check">Mark as Active instantly</label>
+              </div>
+              <div className="form-actions">
+                <button type="button" className="btn btn-secondary" onClick={() => setShowCouponModal(false)}>Cancel</button>
+                <button type="submit" className="btn btn-primary">Create Coupon</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showBannerModal && (
+        <div className="modal-overlay">
+          <div className="glass-panel modal-content">
+            <button className="close-btn" onClick={() => setShowBannerModal(false)}>x</button>
+            <h2 className="modal-title"><Plus size={22} color="var(--color-accent)" /> Create New Banner</h2>
+            <form onSubmit={handleCreateBanner} className="form-grid">
+              <div className="form-group">
+                <label className="form-label">Banner Label (e.g. LAUNCH SPECIAL)</label>
+                <input type="text" className="form-control" value={newBannerLabel} onChange={e => setNewBannerLabel(e.target.value)} placeholder="LAUNCH SPECIAL" required />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Banner Title</label>
+                <input type="text" className="form-control" value={newBannerTitle} onChange={e => setNewBannerTitle(e.target.value)} placeholder="50% OFF SMART TECH" required />
+              </div>
+              <div className="form-group full-width">
+                <label className="form-label">Banner Description</label>
+                <input type="text" className="form-control" value={newBannerDesc} onChange={e => setNewBannerDesc(e.target.value)} placeholder="Futuristic wellness tech with AMOLED screens & rapid charge." />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Target Category Link</label>
+                <select className="form-control" value={newBannerTargetCat} onChange={e => setNewBannerTargetCat(e.target.value)}>
+                  <option value="All">All Categories</option>
+                  <option value="Electronics">Electronics</option>
+                  <option value="Fresh Products">Fresh Products</option>
+                  <option value="Fashion">Fashion</option>
+                  <option value="Home & Kitchen">Home & Kitchen</option>
+                </select>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Sort Order Index</label>
+                <input type="number" className="form-control" value={newBannerSortOrder} onChange={e => setNewBannerSortOrder(e.target.value)} placeholder="0" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Gradient Start Color (HEX)</label>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input type="color" value={newBannerGradientStart} onChange={e => setNewBannerGradientStart(e.target.value)} style={{ width: '40px', height: '38px', padding: '0', border: '1px solid var(--border-color)', borderRadius: '4px', cursor: 'pointer' }} />
+                  <input type="text" className="form-control" value={newBannerGradientStart} onChange={e => setNewBannerGradientStart(e.target.value)} placeholder="#1B5E20" required />
+                </div>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Gradient End Color (HEX)</label>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input type="color" value={newBannerGradientEnd} onChange={e => setNewBannerGradientEnd(e.target.value)} style={{ width: '40px', height: '38px', padding: '0', border: '1px solid var(--border-color)', borderRadius: '4px', cursor: 'pointer' }} />
+                  <input type="text" className="form-control" value={newBannerGradientEnd} onChange={e => setNewBannerGradientEnd(e.target.value)} placeholder="#A5D6A7" required />
+                </div>
+              </div>
+              <div className="form-group full-width checkbox-row">
+                <input type="checkbox" id="banner-active-check" checked={newBannerActive} onChange={e => setNewBannerActive(e.target.checked)} />
+                <label htmlFor="banner-active-check">Mark as Active instantly</label>
+              </div>
+              <div className="form-actions">
+                <button type="button" className="btn btn-secondary" onClick={() => setShowBannerModal(false)}>Cancel</button>
+                <button type="submit" className="btn btn-primary">Create Banner</button>
               </div>
             </form>
           </div>
@@ -1064,11 +1825,11 @@ function ProductsTab({ products, setShowProductModal, toggleProductFeatured, del
           <table className="modern-table product-table">
             <thead>
               <tr>
+                <th>Image</th>
                 <th>ID</th>
                 <th>Product Name</th>
                 <th>Category</th>
                 <th>Market Price</th>
-                <th>Stock</th>
                 <th>Featured</th>
                 <th>Seller Account</th>
                 <th>Manage</th>
@@ -1077,12 +1838,37 @@ function ProductsTab({ products, setShowProductModal, toggleProductFeatured, del
             <tbody>
               {products.map(product => (
                 <tr key={product.id}>
+                  <td>
+                    {product.imageUrlName && (product.imageUrlName.startsWith('http://') || product.imageUrlName.startsWith('https://')) ? (
+                      <img
+                        src={product.imageUrlName}
+                        alt={product.name}
+                        style={{
+                          width: '52px',
+                          height: '52px',
+                          objectFit: 'cover',
+                          borderRadius: '8px',
+                          border: '1px solid #e0e0e0',
+                          display: 'block'
+                        }}
+                        onError={e => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
+                      />
+                    ) : null}
+                    <div style={{
+                      width: '52px', height: '52px', borderRadius: '8px',
+                      background: 'rgba(0,128,0,0.08)',
+                      display: (!product.imageUrlName || (!product.imageUrlName.startsWith('http://') && !product.imageUrlName.startsWith('https://'))) ? 'flex' : 'none',
+                      alignItems: 'center', justifyContent: 'center',
+                      border: '1px dashed #ccc'
+                    }}>
+                      <ShoppingBag size={20} style={{ opacity: 0.3 }} />
+                    </div>
+                  </td>
                   <td className="table-subtext">#{product.id}</td>
                   <td>
                     <p>{product.name}</p>
                     <span className="table-subtext clamp">{product.description}</span>
                   </td>
-                  <td><span className={`status-badge ${Number(product.stockQuantity || 0) === 0 ? 'cancelled' : 'verified'}`}>{Number(product.stockQuantity || 0) === 0 ? 'Out of Stock' : product.stockQuantity}</span></td>
                   <td>{product.category}</td>
                   <td>
                     <p className="accent-text">{formatCurrency(product.price)}</p>

@@ -1028,7 +1028,7 @@ fun DeliveryPartnerPanelScreen(viewModel: BazaarViewModel, onLogout: () -> Unit)
                                                     addressLat = editAddressLat,
                                                     addressLng = editAddressLng
                                                 )
-                                                Toast.makeText(context, "Profile change request applied successfully!", Toast.LENGTH_LONG).show()
+                                                Toast.makeText(context, "Profile edit request submitted! Awaiting admin approval.", Toast.LENGTH_LONG).show()
                                             }
                                         },
                                         colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary),
