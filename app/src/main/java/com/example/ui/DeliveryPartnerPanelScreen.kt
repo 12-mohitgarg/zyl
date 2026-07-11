@@ -2,6 +2,7 @@ package com.example.ui
 
 import android.widget.Toast
 import androidx.compose.animation.*
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -26,8 +27,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.data.Order
+import com.example.data.ReturnRequest
 import com.example.data.User
 import com.example.data.calculateDeliveryCharge
+import com.example.data.deserializeReturnRequests
 import com.example.data.estimateDeliveryDistanceKm
 import com.example.data.estimateItemAmountFromOrderTotal
 import com.example.data.isAddressInServiceArea
@@ -52,6 +55,10 @@ fun DeliveryPartnerPanelScreen(viewModel: BazaarViewModel, onLogout: () -> Unit)
 
     var activeTab by remember { mutableStateOf("Dashboard") } // "Dashboard", "Order Requests", "Active Orders"
 
+    BackHandler(enabled = activeTab != "Dashboard") {
+        activeTab = "Dashboard"
+    }
+
     // Filter orders specifically for this delivery boy
     val myOrders = allOrders.filter { it.deliveryPartnerEmail == currentUser?.email }
     
@@ -75,6 +82,22 @@ fun DeliveryPartnerPanelScreen(viewModel: BazaarViewModel, onLogout: () -> Unit)
         isAddressInServiceArea(it.deliveryAddress, appConfig) && !declinedOrders.contains(it.orderId) 
     }
     val hasOutOfAreaRequests = candidateRequests.size > availableRequests.size
+    val availableReturnRequests: List<Pair<Order, ReturnRequest>> = allOrders.flatMap { order ->
+        deserializeReturnRequests(order.returnRequestsJson)
+            .filter {
+                it.status.equals("Approved", ignoreCase = true) &&
+                    it.deliveryPartnerEmail.isBlank()
+            }
+            .map { order to it }
+    }
+    val activeReturnRequests: List<Pair<Order, ReturnRequest>> = allOrders.flatMap { order ->
+        deserializeReturnRequests(order.returnRequestsJson)
+            .filter {
+                it.deliveryPartnerEmail.equals(currentUser?.email.orEmpty(), ignoreCase = true) &&
+                    it.status.equals("Pickup Accepted", ignoreCase = true)
+            }
+            .map { order to it }
+    }
 
     // Active accepted orders
     val activeAcceptedOrders = myOrders.filter { 
@@ -191,20 +214,33 @@ fun DeliveryPartnerPanelScreen(viewModel: BazaarViewModel, onLogout: () -> Unit)
                             }
                         }
                     }
-                    Box(
-                        modifier = Modifier
-                            .background(
-                                color = if (currentUser?.isDeliveryPartnerVerified == true) LightGreenSecondary.copy(alpha = 0.2f) else AccentRed.copy(alpha = 0.1f),
-                                shape = RoundedCornerShape(6.dp)
+                    Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Box(
+                            modifier = Modifier
+                                .background(
+                                    color = if (currentUser?.isDeliveryPartnerVerified == true) LightGreenSecondary.copy(alpha = 0.2f) else AccentRed.copy(alpha = 0.1f),
+                                    shape = RoundedCornerShape(6.dp)
+                                )
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = if (currentUser?.isDeliveryPartnerVerified == true) "Verified Partner" else "Pending Approval",
+                                color = if (currentUser?.isDeliveryPartnerVerified == true) DarkGreenPrimary else AccentRed,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 10.sp
                             )
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                    ) {
-                        Text(
-                            text = if (currentUser?.isDeliveryPartnerVerified == true) "Verified Partner ✓" else "Pending Approval ⏳",
-                            color = if (currentUser?.isDeliveryPartnerVerified == true) DarkGreenPrimary else AccentRed,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 10.sp
-                        )
+                        }
+                        OutlinedButton(
+                            onClick = { activeTab = "Profile" },
+                            border = BorderStroke(1.dp, DarkGreenPrimary),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            modifier = Modifier.height(32.dp).testTag("delivery_profile_edit_shortcut")
+                        ) {
+                            Icon(Icons.Default.Edit, contentDescription = "", tint = DarkGreenPrimary, modifier = Modifier.size(13.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Edit Profile", color = DarkGreenPrimary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }
@@ -217,11 +253,13 @@ fun DeliveryPartnerPanelScreen(viewModel: BazaarViewModel, onLogout: () -> Unit)
                     .padding(horizontal = 12.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                listOf("Dashboard", "Order Requests", "Active Orders", "Wallet", "Profile").forEach { tab ->
+                listOf("Dashboard", "Order Requests", "Active Orders", "Return Requests", "Active Returns", "Wallet", "Profile").forEach { tab ->
                     val selected = activeTab == tab
                     val countText = when (tab) {
                         "Order Requests" -> " (${availableRequests.size})"
                         "Active Orders" -> " (${activeAcceptedOrders.size})"
+                        "Return Requests" -> " (${availableReturnRequests.size})"
+                        "Active Returns" -> " (${activeReturnRequests.size})"
                         else -> ""
                     }
                     Button(
@@ -492,6 +530,62 @@ fun DeliveryPartnerPanelScreen(viewModel: BazaarViewModel, onLogout: () -> Unit)
                         }
                     }
 
+                    "Return Requests" -> {
+                        if (currentUser?.isDeliveryPartnerVerified != true) {
+                            Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                                Text("Verification pending. Return pickups unlock after admin approval.", color = MutedText, textAlign = TextAlign.Center)
+                            }
+                        } else if (availableReturnRequests.isEmpty()) {
+                            Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Icon(Icons.Default.AssignmentReturn, contentDescription = "", tint = MutedText, modifier = Modifier.size(48.dp))
+                                    Spacer(Modifier.height(8.dp))
+                                    Text("No Return Pickup Requests", fontWeight = FontWeight.Bold, color = RichBlack)
+                                }
+                            }
+                        } else {
+                            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                items(availableReturnRequests) { (order, request) ->
+                                    val seller = allUsers.find { it.email.equals(request.sellerEmail, true) }
+                                    ReturnPickupCard(
+                                        order = order,
+                                        request = request,
+                                        seller = seller,
+                                        actionText = "Accept Return Pickup",
+                                        onAction = {
+                                            viewModel.acceptReturnPickup(order.orderId, request.id, currentUser?.email.orEmpty())
+                                            Toast.makeText(context, "Return pickup accepted.", Toast.LENGTH_SHORT).show()
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    "Active Returns" -> {
+                        if (activeReturnRequests.isEmpty()) {
+                            Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                                Text("No active return pickups.", color = MutedText, textAlign = TextAlign.Center)
+                            }
+                        } else {
+                            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                items(activeReturnRequests) { (order, request) ->
+                                    val seller = allUsers.find { it.email.equals(request.sellerEmail, true) }
+                                    ReturnPickupCard(
+                                        order = order,
+                                        request = request,
+                                        seller = seller,
+                                        actionText = "Mark Return Completed",
+                                        onAction = {
+                                            viewModel.completeReturnPickup(order.orderId, request.id)
+                                            Toast.makeText(context, "Return completed. Amount credited.", Toast.LENGTH_SHORT).show()
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     "Wallet" -> {
                         val withdrawRequests by viewModel.withdrawRequests.collectAsState()
                         val deliveredOrders = myOrders.filter { it.deliveryStatus == "Delivered" || it.status == "Delivered" }
@@ -504,7 +598,12 @@ fun DeliveryPartnerPanelScreen(viewModel: BazaarViewModel, onLogout: () -> Unit)
                                 ?: calculateDeliveryCharge(itemAmount, distance).totalCharge
                         }
                         
-                        val totalEarnings = deliveredOrders.sumOf { calculateOrderEarning(it) }
+                        val returnEarnings = allOrders.sumOf { order ->
+                            deserializeReturnRequests(order.returnRequestsJson)
+                                .filter { it.deliveryPartnerEmail == currentUser?.email && it.status == "Completed" }
+                                .sumOf { it.deliveryFee }
+                        }
+                        val totalEarnings = deliveredOrders.sumOf { calculateOrderEarning(it) } + returnEarnings
                         
                         val totalWithdrawn = withdrawRequests.filter {
                             it.deliveryPartnerEmail == currentUser?.email && it.accountRole == "DeliveryPartner" && it.status != "Failed"
@@ -1270,6 +1369,58 @@ fun OrderRequestCard(
                     Spacer(modifier = Modifier.width(4.dp))
                     Text("Accept Order", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = CustomWhite)
                 }
+            }
+        }
+    }
+}
+
+@Composable
+fun ReturnPickupCard(
+    order: Order,
+    request: ReturnRequest,
+    seller: User?,
+    actionText: String,
+    onAction: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = CustomWhite),
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, DarkGreenPrimary.copy(alpha = 0.35f))
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("RETURN PICKUP #${request.id.takeLast(6)}", fontWeight = FontWeight.Black, fontSize = 12.sp, color = DarkGreenPrimary)
+                    Text(request.productName, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = RichBlack, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+                Text("+₹${String.format("%.2f", request.deliveryFee)}", fontWeight = FontWeight.Black, color = DarkGreenPrimary)
+            }
+
+            if (request.photoUrl.isNotBlank()) {
+                AsyncImage(
+                    model = request.photoUrl,
+                    contentDescription = "Return product photo",
+                    modifier = Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(10.dp)),
+                    contentScale = ContentScale.Crop
+                )
+            }
+
+            Text("Customer: ${request.customerEmail}", fontSize = 11.sp, color = RichBlack)
+            Text("Pickup from customer: ${order.deliveryAddress}", fontSize = 11.sp, color = MutedText)
+            Text("Return to seller: ${seller?.shopName ?: request.sellerEmail}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = RichBlack)
+            Text("Seller address: ${seller?.shopAddress ?: "Seller address not available"}", fontSize = 11.sp, color = MutedText)
+            Text("Reason: ${request.reason}", fontSize = 11.sp, color = RichBlack)
+
+            Button(
+                onClick = onAction,
+                modifier = Modifier.fillMaxWidth().height(42.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Icon(Icons.Default.AssignmentReturn, contentDescription = "", tint = CustomWhite, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(actionText, color = CustomWhite, fontWeight = FontWeight.Bold, fontSize = 12.sp)
             }
         }
     }

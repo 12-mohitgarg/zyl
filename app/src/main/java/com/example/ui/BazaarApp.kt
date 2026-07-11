@@ -5,6 +5,7 @@ import android.content.Intent
 import android.widget.Toast
 import android.net.Uri
 import java.util.UUID
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import kotlin.math.cos
@@ -68,13 +69,16 @@ import com.example.RazorpayResult
 import com.example.data.CartItem
 import com.example.data.Order
 import com.example.data.Product
+import com.example.data.ReturnRequest
 import com.example.data.Banner
 import com.example.data.Coupon
 import com.example.data.Shortcut
 import com.example.data.calculateDeliveryCharge
+import com.example.data.deserializeReturnRequests
 import com.example.data.estimateDeliveryDistanceKm
 import com.example.data.estimateItemAmountFromOrderTotal
 import com.example.data.calculateDistanceKm
+import com.example.data.isNonReturnableCategory
 import com.example.data.isAddressInServiceArea
 import com.example.data.isPincodeInServiceArea
 import com.example.ui.theme.*
@@ -121,6 +125,7 @@ enum class BottomTab(val title: String, val iconFilled: ImageVector, val iconOut
     Profile("Profile", Icons.Filled.Person, Icons.Outlined.Person)
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BazaarApp(activity: MainActivity? = null, viewModel: BazaarViewModel = viewModel()) {
     var currentScreen by remember { mutableStateOf<Screen>(Screen.Splash) }
@@ -1799,6 +1804,14 @@ fun MainScreen(
     val context = LocalContext.current
     var showProductDetail by remember { mutableStateOf<Product?>(null) }
     var directBuyProduct by remember { mutableStateOf<Product?>(null) }
+
+    BackHandler(enabled = directBuyProduct != null || showProductDetail != null || selectedTab != BottomTab.Home) {
+        when {
+            directBuyProduct != null -> directBuyProduct = null
+            showProductDetail != null -> showProductDetail = null
+            selectedTab != BottomTab.Home -> selectedTab = BottomTab.Home
+        }
+    }
 
     LaunchedEffect(activity) {
         activity?.razorpayResult?.collect { result ->
@@ -4483,7 +4496,25 @@ fun OrdersScreen(viewModel: BazaarViewModel) {
     val context = LocalContext.current
     val orderList by viewModel.currentOrders.collectAsState()
     val allProducts by viewModel.allProducts.collectAsState()
+    val categoryConfigs by viewModel.categoryConfigs.collectAsState()
     var selectedOrderForDetail by remember { mutableStateOf<Order?>(null) }
+    var returnTarget by remember { mutableStateOf<Pair<Order, Product>?>(null) }
+    var returnReason by remember { mutableStateOf("") }
+    var returnPhotoUrl by remember { mutableStateOf("") }
+    val returnPhotoLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        val target = returnTarget
+        if (uri != null && target != null) {
+            viewModel.uploadImageToFirebaseStorage(
+                uri,
+                "returns/${target.first.orderId}_${target.second.id}_${System.currentTimeMillis()}.jpg"
+            ) { url ->
+                returnPhotoUrl = url
+                Toast.makeText(context, "Return photo attached.", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -4633,6 +4664,17 @@ fun OrdersScreen(viewModel: BazaarViewModel) {
                 orderLines.forEach { line ->
                     val matchingProduct = line.product
                     val itemTotal = (matchingProduct?.price ?: 0.0) * line.quantity
+                    val existingReturn = matchingProduct?.let { product ->
+                        deserializeReturnRequests(order.returnRequestsJson).find { it.productId == product.id }
+                    }
+                    val categoryReturnable = matchingProduct?.let { product ->
+                        categoryConfigs.find { it.name.equals(product.category, ignoreCase = true) }?.isReturnable
+                            ?: !product.category.isNonReturnableCategory()
+                    } ?: false
+                    val canRequestReturn = matchingProduct != null &&
+                        (displayStatus.equals("Delivered", ignoreCase = true) || displayStatus.equals("Success", ignoreCase = true)) &&
+                        categoryReturnable &&
+                        existingReturn == null
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -4720,6 +4762,47 @@ fun OrdersScreen(viewModel: BazaarViewModel) {
                                     color = if (displayStatus.equals("Cancelled", ignoreCase = true)) AccentRed else DarkGreenPrimary,
                                     fontWeight = FontWeight.Bold
                                 )
+                                if (matchingProduct != null && (displayStatus.equals("Delivered", ignoreCase = true) || displayStatus.equals("Success", ignoreCase = true))) {
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    when {
+                                        existingReturn != null -> {
+                                            Text(
+                                                text = "Return: ${existingReturn.status}",
+                                                fontSize = 10.sp,
+                                                color = DarkGreenPrimary,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                        !categoryReturnable -> {
+                                            Text(
+                                                text = "${matchingProduct.category} items are non-returnable.",
+                                                fontSize = 10.sp,
+                                                color = AccentRed,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                        canRequestReturn -> {
+                                            OutlinedButton(
+                                                onClick = {
+                                                    matchingProduct?.let { product ->
+                                                        returnTarget = order to product
+                                                    }
+                                                    returnReason = ""
+                                                    returnPhotoUrl = ""
+                                                },
+                                                shape = RoundedCornerShape(8.dp),
+                                                border = BorderStroke(1.dp, DarkGreenPrimary),
+                                                colors = ButtonDefaults.outlinedButtonColors(contentColor = DarkGreenPrimary),
+                                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                                modifier = Modifier.height(32.dp)
+                                            ) {
+                                                Icon(Icons.Default.AssignmentReturn, contentDescription = "", modifier = Modifier.size(14.dp))
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text("Return Product", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -4918,6 +5001,60 @@ fun OrdersScreen(viewModel: BazaarViewModel) {
                 }
             }
         }
+    }
+
+    returnTarget?.let { (order, product) ->
+        AlertDialog(
+            onDismissRequest = { returnTarget = null },
+            title = { Text("Request Return", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(product.name, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = RichBlack)
+                    OutlinedTextField(
+                        value = returnReason,
+                        onValueChange = { returnReason = it },
+                        label = { Text("Return reason") },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 3
+                    )
+                    OutlinedButton(
+                        onClick = { returnPhotoLauncher.launch("image/*") },
+                        modifier = Modifier.fillMaxWidth(),
+                        border = BorderStroke(1.dp, DarkGreenPrimary),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = DarkGreenPrimary)
+                    ) {
+                        Icon(Icons.Default.AddAPhoto, contentDescription = "", modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(if (returnPhotoUrl.isBlank()) "Attach Product Photo" else "Change Product Photo")
+                    }
+                    if (returnPhotoUrl.isNotBlank()) {
+                        AsyncImage(
+                            model = resolveProductImageModel(context, returnPhotoUrl),
+                            contentDescription = "Return product photo",
+                            modifier = Modifier.fillMaxWidth().height(140.dp).clip(RoundedCornerShape(10.dp)),
+                            contentScale = ContentScale.Crop
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (returnReason.isBlank() || returnPhotoUrl.isBlank()) {
+                            Toast.makeText(context, "Please add a reason and product photo.", Toast.LENGTH_SHORT).show()
+                        } else {
+                            viewModel.submitReturnRequest(order.orderId, product, returnReason, returnPhotoUrl)
+                            Toast.makeText(context, "Return request sent to seller.", Toast.LENGTH_SHORT).show()
+                            returnTarget = null
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary)
+                ) { Text("Submit", color = CustomWhite) }
+            },
+            dismissButton = {
+                TextButton(onClick = { returnTarget = null }) { Text("Cancel") }
+            }
+        )
     }
 }
 
@@ -7190,6 +7327,7 @@ fun DeviceRow(
 enum class SellerTab(val title: String, val icon: ImageVector) {
     Dashboard("Dashboard", Icons.Default.Dashboard),
     Products("My Inventory", Icons.Default.Inventory2),
+    Returns("Returns", Icons.Default.AssignmentReturn),
     Wallet("Withdraw", Icons.Default.AccountBalanceWallet),
     Profile("Shop Profile", Icons.Default.Storefront)
 }
@@ -7204,11 +7342,20 @@ fun SellerPanelScreen(
     val allProducts by viewModel.allProducts.collectAsState()
     val allUsers by viewModel.allUsers.collectAsState()
     val withdrawRequests by viewModel.withdrawRequests.collectAsState()
+    val categoryConfigs by viewModel.categoryConfigs.collectAsState()
     val context = LocalContext.current
 
     var activeTab by remember { mutableStateOf(SellerTab.Dashboard) }
     var selectedStatusFilter by remember { mutableStateOf("Pending") }
     var showAddProductDialog by remember { mutableStateOf(false) }
+
+    BackHandler(enabled = showAddProductDialog || activeTab != SellerTab.Dashboard) {
+        if (showAddProductDialog) {
+            showAddProductDialog = false
+        } else {
+            activeTab = SellerTab.Dashboard
+        }
+    }
 
     // Form states for Add Product
     var newProdName by remember { mutableStateOf("") }
@@ -7221,6 +7368,15 @@ fun SellerPanelScreen(
     var editingProduct by remember { mutableStateOf<Product?>(null) }
     var deletingProduct by remember { mutableStateOf<Product?>(null) }
     var showProductImageSelectorDialog by remember { mutableStateOf(false) }
+    var categoryDropdownExpanded by remember { mutableStateOf(false) }
+    var updatingReturnRequestId by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(updatingReturnRequestId) {
+        if (updatingReturnRequestId != null) {
+            delay(1200L)
+            updatingReturnRequestId = null
+        }
+    }
 
     val productPhotoLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -8003,9 +8159,133 @@ fun SellerPanelScreen(
                     }
                 }
 
+                SellerTab.Returns -> {
+                    val sellerEmail = currentUser?.email.orEmpty()
+                    val sellerProducts = allProducts.filter { it.sellerEmail.equals(sellerEmail, ignoreCase = true) }
+                    val sellerProductIds = sellerProducts.map { it.id }.toSet()
+                    val sellerReturnRequests = allOrders.flatMap { order ->
+                        deserializeReturnRequests(order.returnRequestsJson)
+                            .filter { request ->
+                                request.productId in sellerProductIds ||
+                                    request.sellerEmail.equals(sellerEmail, ignoreCase = true)
+                            }
+                            .map { request -> order to request }
+                    }.sortedByDescending { it.second.requestDate }
+
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        item {
+                            Text(
+                                text = "Return Review Requests (${sellerReturnRequests.count { it.second.status == "Pending" }})",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp,
+                                color = RichBlack
+                            )
+                            Text(
+                                text = "Review the customer photo and reason before approval. Approved returns go to delivery partners for pickup.",
+                                fontSize = 11.sp,
+                                color = MutedText
+                            )
+                        }
+
+                        if (sellerReturnRequests.isEmpty()) {
+                            item {
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(containerColor = CustomWhite)
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(24.dp).fillMaxWidth(),
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        Icon(Icons.Default.AssignmentReturn, contentDescription = "", tint = MutedText, modifier = Modifier.size(48.dp))
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text("No return requests yet.", color = MutedText, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                        } else {
+                            items(sellerReturnRequests) { (order, request) ->
+                                val customer = allUsers.find { it.email.equals(request.customerEmail, ignoreCase = true) }
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(containerColor = CustomWhite),
+                                    border = BorderStroke(1.dp, SoftGrey),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                            Column(Modifier.weight(1f)) {
+                                                Text("Return #${request.id.takeLast(6)}", fontWeight = FontWeight.Black, color = DarkGreenPrimary, fontSize = 12.sp)
+                                                Text(request.productName, fontWeight = FontWeight.Bold, color = RichBlack, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                            }
+                                            Text(
+                                                text = request.status,
+                                                color = when (request.status) {
+                                                    "Rejected" -> AccentRed
+                                                    "Completed" -> DarkGreenPrimary
+                                                    else -> Color(0xFFF57C00)
+                                                },
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 11.sp
+                                            )
+                                        }
+                                        if (request.photoUrl.isNotBlank()) {
+                                            AsyncImage(
+                                                model = resolveProductImageModel(context, request.photoUrl),
+                                                contentDescription = "Customer return photo",
+                                                modifier = Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(10.dp)),
+                                                contentScale = ContentScale.Crop
+                                            )
+                                        }
+                                        Text("Customer: ${customer?.name ?: request.customerEmail}", fontSize = 11.sp, color = RichBlack)
+                                        Text("Order: ${order.orderId}", fontSize = 11.sp, color = MutedText)
+                                        Text("Reason: ${request.reason}", fontSize = 11.sp, color = RichBlack)
+                                        Text(
+                                            "Refund ₹${String.format("%.2f", request.returnAmount)} + return delivery ₹${String.format("%.2f", request.deliveryFee)} will be debited after completion.",
+                                            fontSize = 11.sp,
+                                            color = MutedText
+                                        )
+
+                                        if (request.status == "Pending") {
+                                            val isUpdatingRequest = updatingReturnRequestId == request.id
+                                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                OutlinedButton(
+                                                    onClick = {
+                                                        updatingReturnRequestId = request.id
+                                                        viewModel.updateReturnRequestStatus(order.orderId, request.id, "Rejected")
+                                                    },
+                                                    enabled = !isUpdatingRequest,
+                                                    modifier = Modifier.weight(1f),
+                                                    border = BorderStroke(1.dp, AccentRed),
+                                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentRed)
+                                                ) { Text("Reject", fontSize = 12.sp) }
+                                                Button(
+                                                    onClick = {
+                                                        updatingReturnRequestId = request.id
+                                                        viewModel.updateReturnRequestStatus(order.orderId, request.id, "Approved")
+                                                    },
+                                                    enabled = !isUpdatingRequest,
+                                                    modifier = Modifier.weight(1f),
+                                                    colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary)
+                                                ) { Text("Approve", color = CustomWhite, fontSize = 12.sp) }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 SellerTab.Wallet -> {
                     val sellerEmail = currentUser?.email.orEmpty()
                     val sellerProducts = allProducts.filter { it.sellerEmail.equals(sellerEmail, true) }
+                    val sellerProductIds = sellerProducts.map { it.id }.toSet()
                     val sellerNames = sellerProducts.map { it.name.lowercase() }
                     val earnings = allOrders.filter { it.status == "Delivered" }.sumOf { order ->
                         order.itemsSummary.split(", ").sumOf { line ->
@@ -8014,10 +8294,19 @@ fun SellerPanelScreen(
                             sellerProducts.find { it.name.equals(name, true) }?.price?.times(qty) ?: 0.0
                         }
                     }
+                    val returnDebits = allOrders.sumOf { order ->
+                        deserializeReturnRequests(order.returnRequestsJson)
+                            .filter { request ->
+                                request.status == "Completed" &&
+                                    (request.productId in sellerProductIds ||
+                                        request.sellerEmail.equals(sellerEmail, ignoreCase = true))
+                            }
+                            .sumOf { it.returnAmount + it.deliveryFee }
+                    }
                     val requested = withdrawRequests.filter {
                         it.deliveryPartnerEmail.equals(sellerEmail, true) && it.accountRole == "Seller" && it.status != "Failed"
                     }.sumOf { it.amount }
-                    val available = (earnings - requested).coerceAtLeast(0.0)
+                    val available = (earnings - returnDebits - requested).coerceAtLeast(0.0)
                     var amount by remember { mutableStateOf("") }
                     val bank = currentUser?.sellerBankAccount.orEmpty()
                     Column(
@@ -8246,6 +8535,88 @@ fun SellerPanelScreen(
                             }
                         }
 
+                        // Profile Edit Request Card
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = CustomWhite),
+                            border = BorderStroke(1.dp, LightGreenSecondary),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Text(
+                                    text = "Profile Edit Request",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    color = RichBlack
+                                )
+                                Text(
+                                    text = "Request shop name, owner name, or address changes for admin approval.",
+                                    fontSize = 11.sp,
+                                    color = MutedText,
+                                    modifier = Modifier.padding(bottom = 12.dp)
+                                )
+
+                                OutlinedTextField(
+                                    value = editShopName,
+                                    onValueChange = { editShopName = it },
+                                    label = { Text("Shop Name") },
+                                    modifier = Modifier.fillMaxWidth().testTag("profile_edit_shopname_top"),
+                                    singleLine = true
+                                )
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                OutlinedTextField(
+                                    value = editName,
+                                    onValueChange = { editName = it },
+                                    label = { Text("Owner Full Name") },
+                                    modifier = Modifier.fillMaxWidth().testTag("profile_edit_ownername_top"),
+                                    singleLine = true
+                                )
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                AddressSuggestionField(
+                                    value = editShopAddress,
+                                    onValueChange = { editShopAddress = it },
+                                    onAddressSelected = {
+                                        editShopAddress = it.address
+                                        editShopAddressLat = it.latitude
+                                        editShopAddressLng = it.longitude
+                                    },
+                                    label = "Shop Address",
+                                    modifier = Modifier.fillMaxWidth(),
+                                    testTag = "profile_edit_shopaddress_top",
+                                    maxLines = 2
+                                )
+                                Spacer(modifier = Modifier.height(14.dp))
+
+                                Button(
+                                    onClick = {
+                                        if (editShopName.isNotBlank() && editName.isNotBlank() && editShopAddress.isNotBlank()) {
+                                            viewModel.applyShopEditRequest(
+                                                editName,
+                                                editShopName,
+                                                editShopAddress,
+                                                editShopAddressLat,
+                                                editShopAddressLng
+                                            )
+                                            Toast.makeText(context, "Profile edit request submitted for admin approval.", Toast.LENGTH_LONG).show()
+                                        } else {
+                                            Toast.makeText(context, "Please enter all fields.", Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary),
+                                    modifier = Modifier.fillMaxWidth().testTag("submit_seller_profile_edit_top"),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text("Submit Edit Request", color = CustomWhite, fontWeight = FontWeight.Bold)
+                                }
+
+                                if (currentUser?.editRequestPending == true) {
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Text("Profile update is pending admin approval.", color = DarkGreenPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
                         // Introduction Video Card
                         Card(
                             modifier = Modifier.fillMaxWidth(),
@@ -8488,14 +8859,55 @@ fun SellerPanelScreen(
                         )
                     }
 
-                    // Simple Category text input or dropdown
-                    OutlinedTextField(
-                        value = newProdCat,
-                        onValueChange = { newProdCat = it },
-                        label = { Text("Category (e.g. Electronics, Fashion)") },
-                        modifier = Modifier.fillMaxWidth().testTag("add_product_category"),
-                        singleLine = true
-                    )
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        OutlinedButton(
+                            onClick = { categoryDropdownExpanded = true },
+                            modifier = Modifier.fillMaxWidth().testTag("add_product_category"),
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, DarkGreenPrimary),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = RichBlack)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                val selectedCategory = categoryConfigs.find { it.name.equals(newProdCat, ignoreCase = true) }
+                                Column(horizontalAlignment = Alignment.Start) {
+                                    Text(newProdCat.ifBlank { "Select category" }, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    Text(
+                                        if (selectedCategory?.isReturnable == false || newProdCat.isNonReturnableCategory()) "Non-returnable" else "Returnable",
+                                        fontSize = 10.sp,
+                                        color = if (selectedCategory?.isReturnable == false || newProdCat.isNonReturnableCategory()) AccentRed else DarkGreenPrimary
+                                    )
+                                }
+                                Icon(Icons.Default.ArrowDropDown, contentDescription = "Select category")
+                            }
+                        }
+                        DropdownMenu(
+                            expanded = categoryDropdownExpanded,
+                            onDismissRequest = { categoryDropdownExpanded = false }
+                        ) {
+                            categoryConfigs.forEach { category ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text(category.name, fontWeight = FontWeight.Bold)
+                                            Text(
+                                                if (category.isReturnable) "Returnable" else "Non-returnable",
+                                                fontSize = 10.sp,
+                                                color = if (category.isReturnable) DarkGreenPrimary else AccentRed
+                                            )
+                                        }
+                                    },
+                                    onClick = {
+                                        newProdCat = category.name
+                                        categoryDropdownExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
 
                     OutlinedTextField(
                         value = newProdDesc,

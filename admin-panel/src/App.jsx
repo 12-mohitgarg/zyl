@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   CheckCircle,
   Clock,
+  CreditCard,
   FileText,
   KeyRound,
   LayoutDashboard,
@@ -15,6 +16,7 @@ import {
   Sparkles,
   Star,
   Trash2,
+  Truck,
   Users as UsersIcon,
   Settings,
   Ticket
@@ -32,6 +34,13 @@ import { db } from './firebase';
 
 const ORDER_STATUSES = ['Pending', 'Processing', 'Ready to Deliver', 'Shipped', 'Delivered', 'Cancelled', 'Seller Reject Requested'];
 const ROLE_FILTERS = ['All', 'User', 'Seller', 'DeliveryPartner', 'Admin'];
+const RETURN_WINDOW_DAYS = 7;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const WITHDRAWAL_STATUS_ACTIONS = [
+  { label: 'Pending', status: 'Pending', className: 'pending' },
+  { label: 'Success', status: 'Paid', className: 'verified' },
+  { label: 'Rejected', status: 'Failed', className: 'cancelled' }
+];
 
 const defaultProducts = [
   { id: 1, name: 'ZYL Sound Pro Wireless ANC', price: 129.99, originalPrice: 189.99, rating: 4.8, category: 'Electronics', imageUrlName: 'img_hero_banner', description: 'Premium high-fidelity wireless spatial audio headphones with leading hybrid Active Noise Cancelation. Styled in matte black with dynamic metallic accents.', isFeatured: true, sellerEmail: 'seller@store.com', extraImages: '' },
@@ -60,6 +69,15 @@ const defaultOrders = [
   { orderId: 'ORD-5431', email: 'buyer@bazaar.com', orderDate: Date.now() - 3600000 * 24, totalAmount: 4.99, status: 'Delivered', itemsSummary: '1x Premium Farms Organic Apples (1kg)', paymentMode: 'Wallet', deliveryAddress: '22 Market Street, Eco City', deliveryPartnerEmail: 'rider@bazaar.com', deliveryStatus: 'Delivered', sellerConfirmed: true }
 ];
 
+const defaultCategories = [
+  { name: 'Electronics', isReturnable: true },
+  { name: 'Fashion', isReturnable: true },
+  { name: 'Fresh Products', isReturnable: true },
+  { name: 'Home & Kitchen', isReturnable: true },
+  { name: 'Food', isReturnable: false },
+  { name: 'Vegetables', isReturnable: false }
+];
+
 function roleLabel(role) {
   if (role === 'DeliveryPartner') return 'Delivery Partner';
   return role || 'User';
@@ -71,6 +89,288 @@ function statusClass(status) {
 
 function formatCurrency(value) {
   return `₹${Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+}
+
+function parseProductQuantities(value) {
+  if (!value || typeof value !== 'string') return new Map();
+  return new Map(
+    value
+      .split(',')
+      .map(entry => {
+        const [rawId, rawQty] = entry.split(':');
+        const productId = Number(rawId);
+        const quantity = Number(rawQty);
+        return Number.isFinite(productId) && Number.isFinite(quantity) && quantity > 0
+          ? [productId, quantity]
+          : null;
+      })
+      .filter(Boolean)
+  );
+}
+
+function parseSummaryLine(line) {
+  const text = String(line || '').trim();
+  const leadingQty = text.match(/^(\d+)\s*x\s*(.+)$/i);
+  if (leadingQty) return { name: leadingQty[2].trim(), quantity: Number(leadingQty[1]) || 1 };
+
+  const trailingQty = text.match(/^(.+?)\s*x\s*(\d+)$/i);
+  if (trailingQty) return { name: trailingQty[1].trim(), quantity: Number(trailingQty[2]) || 1 };
+
+  return { name: text, quantity: 1 };
+}
+
+function parseReturnRequests(value) {
+  if (!value || typeof value !== 'string') return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function getDisplayNameByEmail(users, email, fallback = 'N/A') {
+  const user = users.find(u => (u.email || '').toLowerCase() === String(email || '').toLowerCase());
+  return user?.shopName || user?.name || email || fallback;
+}
+
+function getUserByEmail(users, email) {
+  return users.find(u => (u.email || '').toLowerCase() === String(email || '').toLowerCase());
+}
+
+function getBankDetails(user) {
+  if (!user) return 'Bank details not available';
+  return user.sellerBankAccount || user.deliveryBankAccount || 'Bank details not available';
+}
+
+function isDeliveredOrder(order) {
+  return String(order.status || '').toLowerCase() === 'delivered' ||
+    String(order.deliveryStatus || '').toLowerCase() === 'delivered';
+}
+
+function getReturnWindowEnd(order) {
+  const deliveredAt = Number(order.deliveredAt || order.deliveryDate || order.orderDeliveredAt || order.orderDate || 0);
+  return deliveredAt > 0 ? deliveredAt + RETURN_WINDOW_DAYS * DAY_MS : 0;
+}
+
+function isReturnWindowClosed(order) {
+  const windowEnd = getReturnWindowEnd(order);
+  return isDeliveredOrder(order) && windowEnd > 0 && Date.now() >= windowEnd;
+}
+
+function withdrawalStatusLabel(status) {
+  if (status === 'Paid') return 'Success';
+  if (status === 'Failed') return 'Rejected';
+  if (status === 'Processing') return 'Processing';
+  return 'Pending';
+}
+
+function withdrawalStatusClass(status) {
+  if (status === 'Paid') return 'verified';
+  if (status === 'Failed') return 'cancelled';
+  return 'pending';
+}
+
+function buildSettlementEntries(orders, products, users) {
+  const productsById = new Map(products.map(product => [Number(product.id), product]));
+  const productsByName = new Map(products.map(product => [String(product.name || '').toLowerCase(), product]));
+
+  return orders.map(order => {
+    const quantityMap = parseProductQuantities(order.productQuantities);
+    let items = Array.from(quantityMap.entries()).map(([productId, quantity]) => {
+      const product = productsById.get(Number(productId));
+      const unitPrice = Number(product?.price || 0);
+      return {
+        productId,
+        productName: product?.name || `Product #${productId}`,
+        sellerEmail: product?.sellerEmail || '',
+        sellerName: getDisplayNameByEmail(users, product?.sellerEmail, product?.sellerEmail || 'System Store'),
+        quantity,
+        unitPrice,
+        grossAmount: unitPrice * quantity
+      };
+    });
+
+    if (items.length === 0) {
+      items = String(order.itemsSummary || '')
+        .split(',')
+        .map(parseSummaryLine)
+        .filter(item => item.name)
+        .map(item => {
+          const product = productsByName.get(item.name.toLowerCase());
+          const unitPrice = Number(product?.price || 0);
+          return {
+            productId: product?.id || '',
+            productName: product?.name || item.name,
+            sellerEmail: product?.sellerEmail || '',
+            sellerName: getDisplayNameByEmail(users, product?.sellerEmail, product?.sellerEmail || 'System Store'),
+            quantity: item.quantity,
+            unitPrice,
+            grossAmount: unitPrice * item.quantity
+          };
+        });
+    }
+
+    const grossProductsAmount = items.reduce((sum, item) => sum + item.grossAmount, 0);
+    const orderItemsAmount = Number(order.itemsAmount || 0);
+    const totalAmount = Number(order.totalAmount || 0);
+    const deliveryEarning = Number(order.deliveryCharge || 0) ||
+      (orderItemsAmount > 0 ? Math.max(totalAmount - orderItemsAmount, 0) : 0);
+    const sellerPool = orderItemsAmount > 0
+      ? orderItemsAmount
+      : (grossProductsAmount > 0 ? grossProductsAmount : Math.max(totalAmount - deliveryEarning, 0));
+
+    const settledItems = items.map(item => ({
+      ...item,
+      sellerReceivable: grossProductsAmount > 0
+        ? (item.grossAmount / grossProductsAmount) * sellerPool
+        : item.grossAmount
+    }));
+
+    const returns = parseReturnRequests(order.returnRequestsJson)
+      .filter(request => request && request.status !== 'Rejected')
+      .map(request => {
+        const sellerEmail = request.sellerEmail || productsById.get(Number(request.productId))?.sellerEmail || '';
+        const sellerName = getDisplayNameByEmail(users, sellerEmail, sellerEmail || 'System Store');
+        const returnAmount = Number(request.returnAmount || 0);
+        const deliveryFee = Number(request.deliveryFee || 0);
+        return {
+          ...request,
+          sellerEmail,
+          sellerName,
+          returnAmount,
+          deliveryFee,
+          debitAmount: returnAmount + deliveryFee,
+          isCompleted: request.status === 'Completed'
+        };
+      });
+
+    return {
+      order,
+      items: settledItems,
+      returns,
+      buyerEmail: order.email || '',
+      buyerName: getDisplayNameByEmail(users, order.email, order.email || 'Customer'),
+      totalPaid: totalAmount,
+      sellerReceivable: settledItems.reduce((sum, item) => sum + item.sellerReceivable, 0),
+      deliveryPartnerEmail: order.deliveryPartnerEmail || '',
+      deliveryPartnerName: getDisplayNameByEmail(users, order.deliveryPartnerEmail, order.deliveryPartnerEmail || 'Not accepted'),
+      deliveryEarning,
+      returnWindowEnd: getReturnWindowEnd(order),
+      payoutReady: isReturnWindowClosed(order)
+    };
+  });
+}
+
+function buildPayoutAccounts(entries, users) {
+  const accounts = new Map();
+
+  const ensureAccount = (role, email, name) => {
+    const key = `${role}:${email || name}`;
+    if (!accounts.has(key)) {
+      const user = getUserByEmail(users, email);
+      accounts.set(key, {
+        key,
+        role,
+        email,
+        name: name || getDisplayNameByEmail(users, email, email || 'Account'),
+        bankDetails: getBankDetails(user),
+        readyAmount: 0,
+        pendingAmount: 0,
+        returnDebits: 0,
+        expectedReturnDebits: 0,
+        orders: new Set()
+      });
+    }
+    return accounts.get(key);
+  };
+
+  entries.forEach(entry => {
+    if (!isDeliveredOrder(entry.order)) return;
+
+    entry.items.forEach(item => {
+      const account = ensureAccount('Seller', item.sellerEmail, item.sellerName);
+      const completedDebits = entry.returns
+        .filter(request => request.isCompleted && (
+          Number(request.productId || 0) === Number(item.productId || 0) ||
+          (!request.productId && request.sellerEmail === item.sellerEmail)
+        ))
+        .reduce((sum, request) => sum + request.debitAmount, 0);
+      const expectedDebits = entry.returns
+        .filter(request => !request.isCompleted && (
+          Number(request.productId || 0) === Number(item.productId || 0) ||
+          (!request.productId && request.sellerEmail === item.sellerEmail)
+        ))
+        .reduce((sum, request) => sum + request.debitAmount, 0);
+      const netAmount = Math.max(item.sellerReceivable - completedDebits, 0);
+
+      if (entry.payoutReady) account.readyAmount += netAmount;
+      else account.pendingAmount += netAmount;
+      account.returnDebits += completedDebits;
+      account.expectedReturnDebits += expectedDebits;
+      account.orders.add(entry.order.orderId);
+    });
+
+    if (entry.deliveryPartnerEmail) {
+      const account = ensureAccount('DeliveryPartner', entry.deliveryPartnerEmail, entry.deliveryPartnerName);
+      const returnPickupEarnings = entry.returns
+        .filter(request => request.isCompleted && request.deliveryPartnerEmail === entry.deliveryPartnerEmail)
+        .reduce((sum, request) => sum + request.deliveryFee, 0);
+      const totalDelivery = entry.deliveryEarning + returnPickupEarnings;
+
+      if (entry.payoutReady) account.readyAmount += totalDelivery;
+      else account.pendingAmount += totalDelivery;
+      account.orders.add(entry.order.orderId);
+    }
+
+    entry.returns
+      .filter(request => request.isCompleted && request.deliveryPartnerEmail && request.deliveryPartnerEmail !== entry.deliveryPartnerEmail)
+      .forEach(request => {
+        const account = ensureAccount(
+          'DeliveryPartner',
+          request.deliveryPartnerEmail,
+          getDisplayNameByEmail(users, request.deliveryPartnerEmail, request.deliveryPartnerEmail)
+        );
+        if (entry.payoutReady) account.readyAmount += request.deliveryFee;
+        else account.pendingAmount += request.deliveryFee;
+        account.orders.add(`${entry.order.orderId} return`);
+      });
+  });
+
+  return Array.from(accounts.values())
+    .map(account => ({ ...account, orders: Array.from(account.orders) }))
+    .filter(account => account.readyAmount > 0 || account.pendingAmount > 0 || account.returnDebits > 0 || account.expectedReturnDebits > 0)
+    .sort((a, b) => b.readyAmount - a.readyAmount || b.pendingAmount - a.pendingAmount);
+}
+
+function buildReturnRequestRows(orders, products, users) {
+  const productsById = new Map(products.map(product => [Number(product.id), product]));
+
+  return orders.flatMap(order => (
+    parseReturnRequests(order.returnRequestsJson).map(request => {
+      const product = productsById.get(Number(request.productId));
+      const sellerEmail = request.sellerEmail || product?.sellerEmail || '';
+      const deliveryPartnerEmail = request.deliveryPartnerEmail || '';
+      const returnAmount = Number(request.returnAmount || product?.price || 0);
+      const deliveryFee = Number(request.deliveryFee || 0);
+
+      return {
+        ...request,
+        orderId: order.orderId,
+        order,
+        productName: request.productName || product?.name || `Product #${request.productId || 'N/A'}`,
+        sellerEmail,
+        sellerName: getDisplayNameByEmail(users, sellerEmail, sellerEmail || 'System Store'),
+        customerEmail: request.customerEmail || order.email || '',
+        customerName: getDisplayNameByEmail(users, request.customerEmail || order.email, request.customerEmail || order.email || 'Customer'),
+        deliveryPartnerEmail,
+        deliveryPartnerName: deliveryPartnerEmail ? getDisplayNameByEmail(users, deliveryPartnerEmail, deliveryPartnerEmail) : 'Not accepted',
+        returnAmount,
+        deliveryFee,
+        debitAmount: returnAmount + deliveryFee
+      };
+    })
+  )).sort((a, b) => Number(b.requestDate || 0) - Number(a.requestDate || 0));
 }
 
 function DetailLine({ label, value }) {
@@ -94,6 +394,8 @@ function App() {
   const [users, setUsers] = useState([]);
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [withdrawalRequests, setWithdrawalRequests] = useState([]);
   const [loading, setLoading] = useState(false);
   const [dbError, setDbError] = useState(null);
   const [useMockData, setUseMockData] = useState(false);
@@ -103,8 +405,16 @@ function App() {
   const [userRoleFilter, setUserRoleFilter] = useState('All');
   const [orderSearch, setOrderSearch] = useState('');
   const [orderStatusFilter, setOrderStatusFilter] = useState('All');
+  const [returnSearch, setReturnSearch] = useState('');
+  const [returnStatusFilter, setReturnStatusFilter] = useState('All');
   const [expandedUserEmail, setExpandedUserEmail] = useState('');
   const [expandedOrderId, setExpandedOrderId] = useState('');
+  const [appConfig, setAppConfig] = useState({});
+  const [serviceCitiesText, setServiceCitiesText] = useState('');
+  const [servicePincodesText, setServicePincodesText] = useState('');
+  const [payoutDelayHours, setPayoutDelayHours] = useState('24');
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [newCategoryReturnable, setNewCategoryReturnable] = useState(true);
 
   const [showProductModal, setShowProductModal] = useState(false);
   const [newProductName, setNewProductName] = useState('');
@@ -146,6 +456,8 @@ function App() {
       setUsers([]);
       setProducts([]);
       setOrders([]);
+      setCategories([]);
+      setWithdrawalRequests([]);
       setCoupons([]);
       setLoading(false);
       return undefined;
@@ -155,6 +467,8 @@ function App() {
       setUsers(defaultUsers);
       setProducts(defaultProducts);
       setOrders(defaultOrders);
+      setCategories(defaultCategories);
+      setWithdrawalRequests([]);
       setCoupons([]);
       setLoading(false);
       return undefined;
@@ -165,6 +479,8 @@ function App() {
     let unsubscribeOrders = () => { };
     let unsubscribeConfig = () => { };
     let unsubscribeCoupons = () => { };
+    let unsubscribeCategories = () => { };
+    let unsubscribeWithdrawals = () => { };
 
     try {
       setLoading(true);
@@ -219,6 +535,31 @@ function App() {
         }
       );
 
+      unsubscribeCategories = onSnapshot(
+        collection(db, 'categories'),
+        snapshot => {
+          const list = snapshot.docs.map(categoryDoc => ({
+            name: categoryDoc.data().name || categoryDoc.id,
+            isReturnable: categoryDoc.data().isReturnable !== false
+          }));
+          setCategories(list.sort((a, b) => a.name.localeCompare(b.name)));
+        },
+        err => console.warn('Firestore categories sync failed:', err)
+      );
+
+      unsubscribeWithdrawals = onSnapshot(
+        collection(db, 'withdrawal_requests'),
+        snapshot => {
+          const list = snapshot.docs.map(withdrawDoc => ({
+            ...withdrawDoc.data(),
+            id: withdrawDoc.id,
+            accountEmail: withdrawDoc.data().accountEmail || withdrawDoc.data().deliveryPartnerEmail || ''
+          }));
+          setWithdrawalRequests(list.sort((a, b) => Number(b.requestDate || 0) - Number(a.requestDate || 0)));
+        },
+        err => console.warn('Firestore withdrawals sync failed:', err)
+      );
+
       unsubscribeConfig = onSnapshot(doc(db, 'app_config', 'main'), configDoc => {
         const config = configDoc.exists() ? configDoc.data() : {};
         setAppConfig(config);
@@ -238,6 +579,8 @@ function App() {
       unsubscribeOrders();
       unsubscribeConfig();
       unsubscribeCoupons();
+      unsubscribeCategories();
+      unsubscribeWithdrawals();
     };
   }, [authUser, useMockData]);
 
@@ -251,6 +594,49 @@ function App() {
   const totalRevenue = orders
     .filter(o => ['Delivered', 'Processing', 'Ready to Deliver', 'Shipped'].includes(o.status))
     .reduce((sum, o) => sum + Number(o.totalAmount || 0), 0);
+
+  const settlementEntries = useMemo(
+    () => buildSettlementEntries(orders, products, users),
+    [orders, products, users]
+  );
+
+  const payoutAccounts = useMemo(
+    () => buildPayoutAccounts(settlementEntries, users),
+    [settlementEntries, users]
+  );
+
+  const settlementTotals = useMemo(() => {
+    const returnDebit = settlementEntries.reduce(
+      (sum, entry) => sum + entry.returns.filter(request => request.isCompleted).reduce((total, request) => total + request.debitAmount, 0),
+      0
+    );
+    const expectedReturnDebit = settlementEntries.reduce(
+      (sum, entry) => sum + entry.returns.filter(request => !request.isCompleted).reduce((total, request) => total + request.debitAmount, 0),
+      0
+    );
+    const payoutReady = payoutAccounts.reduce((sum, account) => sum + account.readyAmount, 0);
+    const payoutPending = payoutAccounts.reduce((sum, account) => sum + account.pendingAmount, 0);
+
+    return settlementEntries.reduce(
+      (totals, entry) => ({
+        paid: totals.paid + entry.totalPaid,
+        sellers: totals.sellers + entry.sellerReceivable,
+        delivery: totals.delivery + entry.deliveryEarning,
+        returnDebit,
+        expectedReturnDebit,
+        payoutReady,
+        payoutPending
+      }),
+      { paid: 0, sellers: 0, delivery: 0, returnDebit, expectedReturnDebit, payoutReady, payoutPending }
+    );
+  }, [payoutAccounts, settlementEntries]);
+
+  const returnRows = useMemo(
+    () => buildReturnRequestRows(orders, products, users),
+    [orders, products, users]
+  );
+
+  const pendingReturnCount = returnRows.filter(request => (request.status || 'Pending') === 'Pending').length;
 
   const filteredUsers = useMemo(() => {
     const query = userSearch.trim().toLowerCase();
@@ -275,6 +661,25 @@ function App() {
       return matchesStatus && (!query || searchBlob.includes(query));
     });
   }, [orderSearch, orderStatusFilter, orders]);
+
+  const filteredReturnRows = useMemo(() => {
+    const query = returnSearch.trim().toLowerCase();
+    return returnRows.filter(request => {
+      const status = request.status || 'Pending';
+      const matchesStatus = returnStatusFilter === 'All' || status === returnStatusFilter;
+      const searchBlob = [
+        request.id,
+        request.orderId,
+        request.productName,
+        request.customerEmail,
+        request.sellerEmail,
+        request.deliveryPartnerEmail,
+        request.reason,
+        status
+      ].filter(Boolean).join(' ').toLowerCase();
+      return matchesStatus && (!query || searchBlob.includes(query));
+    });
+  }, [returnRows, returnSearch, returnStatusFilter]);
 
   const handleLogin = async event => {
     event.preventDefault();
@@ -326,7 +731,7 @@ function App() {
       alert('Please connect to your live Firebase project to seed data.');
       return;
     }
-    if (!window.confirm('This will seed default users, products, and orders to your Firestore database. Continue?')) return;
+    if (!window.confirm('This will seed default users, products, orders, and categories to your Firestore database. Continue?')) return;
 
     try {
       setLoading(true);
@@ -334,6 +739,7 @@ function App() {
       for (const u of defaultUsers) await setDoc(doc(db, 'users', u.email), u);
       for (const p of defaultProducts) await setDoc(doc(db, 'products', p.id.toString()), p);
       for (const o of defaultOrders) await setDoc(doc(db, 'orders', o.orderId), o);
+      for (const c of defaultCategories) await setDoc(doc(db, 'categories', c.name), c);
       setDbStatusMsg('Database successfully seeded with default catalog data.');
       setTimeout(() => setDbStatusMsg(''), 5000);
     } catch (e) {
@@ -348,6 +754,7 @@ function App() {
       users,
       products,
       orders,
+      categories,
       exportedAt: new Date().toISOString(),
       projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID
     };
@@ -373,13 +780,14 @@ function App() {
         if (!importedData.users || !importedData.products || !importedData.orders) {
           throw new Error('Invalid backup file format. Must contain users, products, and orders.');
         }
-        if (!window.confirm(`Found ${importedData.users.length} users, ${importedData.products.length} products, and ${importedData.orders.length} orders. Import them into your database?`)) return;
+        if (!window.confirm(`Found ${importedData.users.length} users, ${importedData.products.length} products, ${importedData.orders.length} orders, and ${(importedData.categories || []).length} categories. Import them into your database?`)) return;
 
         setLoading(true);
         setDbStatusMsg('Importing data. Please wait...');
         for (const u of importedData.users) if (u.email) await setDoc(doc(db, 'users', u.email), u);
         for (const p of importedData.products) if (p.id) await setDoc(doc(db, 'products', p.id.toString()), p);
         for (const o of importedData.orders) if (o.orderId) await setDoc(doc(db, 'orders', o.orderId), o);
+        for (const c of importedData.categories || []) if (c.name) await setDoc(doc(db, 'categories', c.name), c);
         setDbStatusMsg('Database backup successfully restored.');
         setTimeout(() => setDbStatusMsg(''), 5000);
       } catch (err) {
@@ -565,6 +973,64 @@ function App() {
     }
   };
 
+  const updateReturnRequest = async (orderId, requestId, payload) => {
+    const order = orders.find(o => o.orderId === orderId);
+    if (!order) {
+      alert('Order not found for this return request.');
+      return;
+    }
+
+    const updatedRequests = parseReturnRequests(order.returnRequestsJson).map(request => {
+      if (request.id !== requestId) return request;
+      const next = { ...request, ...payload, updatedAt: Date.now() };
+      if (payload.status === 'Approved' && !Number(next.approvedDate || 0)) {
+        next.approvedDate = Date.now();
+      }
+      return next;
+    });
+
+    const nextJson = JSON.stringify(updatedRequests);
+    if (useMockData) {
+      setOrders(orders.map(o => (o.orderId === orderId ? { ...o, returnRequestsJson: nextJson } : o)));
+      return;
+    }
+
+    try {
+      await updateDoc(doc(db, 'orders', orderId), { returnRequestsJson: nextJson });
+    } catch (e) {
+      alert(`Error updating return request: ${e.message}`);
+    }
+  };
+
+  const updateWithdrawalStatus = async (requestId, nextStatus) => {
+    const payload = {
+      status: nextStatus,
+      updatedAt: Date.now()
+    };
+
+    if (nextStatus === 'Pending') {
+      payload.failureReason = '';
+    }
+    if (nextStatus === 'Paid') {
+      payload.paidAt = Date.now();
+      payload.failureReason = '';
+    }
+    if (nextStatus === 'Failed') {
+      payload.failureReason = 'Rejected by admin';
+    }
+
+    if (useMockData) {
+      setWithdrawalRequests(withdrawalRequests.map(req => (req.id === requestId ? { ...req, ...payload } : req)));
+      return;
+    }
+
+    try {
+      await updateDoc(doc(db, 'withdrawal_requests', requestId), payload);
+    } catch (e) {
+      alert(`Error updating withdrawal request: ${e.message}`);
+    }
+  };
+
   const toggleCouponActive = async (code, currentStatus) => {
     if (useMockData) {
       setCoupons(coupons.map(c => (c.code === code ? { ...c, isActive: !currentStatus } : c)));
@@ -637,6 +1103,65 @@ function App() {
     setNewCouponActive(true);
   };
 
+  const saveServiceConfig = async event => {
+    event.preventDefault();
+    const payload = {
+      ...appConfig,
+      serviceCities: serviceCitiesText.split(',').map(v => v.trim()).filter(Boolean),
+      servicePincodes: servicePincodesText.split(',').map(v => v.trim()).filter(Boolean),
+      payoutDelayHours: Number(payoutDelayHours || 0)
+    };
+    if (useMockData) {
+      setAppConfig(payload);
+      setDbStatusMsg('Settings saved in demo mode.');
+      setTimeout(() => setDbStatusMsg(''), 3000);
+      return;
+    }
+    try {
+      await setDoc(doc(db, 'app_config', 'main'), payload, { merge: true });
+      setDbStatusMsg('Settings saved.');
+      setTimeout(() => setDbStatusMsg(''), 3000);
+    } catch (e) {
+      alert(`Error saving settings: ${e.message}`);
+    }
+  };
+
+  const handleCreateCategory = async event => {
+    event.preventDefault();
+    const name = newCategoryName.trim();
+    if (!name) return;
+    const isReturnable = name.toLowerCase() === 'food' || name.toLowerCase() === 'vegetables'
+      ? false
+      : newCategoryReturnable;
+    const payload = { name, isReturnable };
+    if (useMockData) {
+      setCategories([...categories.filter(c => c.name !== name), payload].sort((a, b) => a.name.localeCompare(b.name)));
+    } else {
+      await setDoc(doc(db, 'categories', name), payload);
+    }
+    setNewCategoryName('');
+    setNewCategoryReturnable(true);
+  };
+
+  const toggleCategoryReturnable = async category => {
+    const forcedNonReturnable = ['food', 'vegetables'].includes(category.name.toLowerCase());
+    const nextValue = forcedNonReturnable ? false : !category.isReturnable;
+    if (useMockData) {
+      setCategories(categories.map(c => c.name === category.name ? { ...c, isReturnable: nextValue } : c));
+    } else {
+      await updateDoc(doc(db, 'categories', category.name), { isReturnable: nextValue });
+    }
+  };
+
+  const deleteCategory = async name => {
+    if (!window.confirm(`Delete category "${name}"?`)) return;
+    if (useMockData) {
+      setCategories(categories.filter(c => c.name !== name));
+    } else {
+      await deleteDoc(doc(db, 'categories', name));
+    }
+  };
+
   if (authLoading) {
     return (
       <div className="auth-screen">
@@ -701,6 +1226,9 @@ function App() {
             ['users', UsersIcon, 'Users'],
             ['products', ShoppingBag, 'Products'],
             ['orders', FileText, 'Orders'],
+            ['returns', RefreshCw, 'Returns'],
+            ['payments', CreditCard, 'Payments'],
+            ['categories', Settings, 'Categories'],
             ['coupons', Ticket, 'Coupons'],
             ['settings', Settings, 'Service Settings']
           ].map(([tab, Icon, label]) => (
@@ -708,6 +1236,7 @@ function App() {
               <Icon size={20} />
               {label}
               {tab === 'users' && pendingSellersCount + pendingPartnersCount > 0 && <span className="nav-count">{pendingSellersCount + pendingPartnersCount}</span>}
+              {tab === 'returns' && pendingReturnCount > 0 && <span className="nav-count">{pendingReturnCount}</span>}
             </button>
           ))}
         </nav>
@@ -761,6 +1290,9 @@ function App() {
               {activeTab === 'users' && 'User & Account Management'}
               {activeTab === 'products' && 'Inventory Products Catalog'}
               {activeTab === 'orders' && 'Order Transactions'}
+              {activeTab === 'returns' && 'Return Requests'}
+              {activeTab === 'payments' && 'Payment & Payout Ledger'}
+              {activeTab === 'categories' && 'Category Return Rules'}
               {activeTab === 'coupons' && 'Coupon Directory'}
               {activeTab === 'settings' && 'Service Area & Payout Settings'}
             </h1>
@@ -769,6 +1301,9 @@ function App() {
               {activeTab === 'users' && 'Review buyers, sellers, delivery partners, admin accounts, and verification documents.'}
               {activeTab === 'products' && 'Add new items, manage featured products, and review seller inventory.'}
               {activeTab === 'orders' && 'Update workflow statuses, delivery assignment, payment details, and order flags.'}
+              {activeTab === 'returns' && 'Review customer return photos, seller approval status, delivery pickup assignment, and payout deductions.'}
+              {activeTab === 'payments' && 'Track customer payments, seller receivables, product splits, and delivery partner earnings.'}
+              {activeTab === 'categories' && 'Add seller listing categories and define whether customers can request returns.'}
               {activeTab === 'coupons' && 'Create, configure, and monitor discount promo coupons.'}
               {activeTab === 'settings' && 'Control eligible cities, pincodes, and automatic Razorpay payout timing.'}
             </p>
@@ -1110,6 +1645,188 @@ function App() {
               </div>
             )}
 
+            {activeTab === 'returns' && (
+              <div className="glass-panel section-card">
+                <div className="section-header stacked-section-header">
+                  <h2>Return Request Ledger</h2>
+                  <div className="toolbar-row">
+                    <div className="search-box">
+                      <Search size={16} />
+                      <input value={returnSearch} onChange={e => setReturnSearch(e.target.value)} placeholder="Search returns" />
+                    </div>
+                    <select className="form-control compact-select" value={returnStatusFilter} onChange={e => setReturnStatusFilter(e.target.value)}>
+                      <option value="All">All statuses</option>
+                      {['Pending', 'Approved', 'Pickup Accepted', 'Completed', 'Rejected'].map(status => <option key={status} value={status}>{status}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                {filteredReturnRows.length === 0 ? (
+                  <Empty icon={RefreshCw} title="No Return Requests" text="Customer return requests will appear here after users submit them from the app." />
+                ) : (
+                  <div className="table-container settlement-table-container">
+                    <table className="modern-table return-table">
+                      <thead>
+                        <tr>
+                          <th>Return</th>
+                          <th>Customer & Product</th>
+                          <th>Seller Debit</th>
+                          <th>Delivery Pickup</th>
+                          <th>Status</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredReturnRows.map(request => (
+                          <tr key={`${request.orderId}-${request.id}`}>
+                            <td>
+                              <p className="accent-text">{request.id || 'Return Request'}</p>
+                              <span className="table-subtext">Order: {request.orderId}</span>
+                              <span className="table-subtext block-text">{request.requestDate ? new Date(Number(request.requestDate)).toLocaleString() : 'No request date'}</span>
+                              {request.photoUrl && (
+                                <a className="table-subtext block-text" href={request.photoUrl} target="_blank" rel="noreferrer">View customer photo</a>
+                              )}
+                            </td>
+                            <td>
+                              <p>{request.productName}</p>
+                              <span className="table-subtext">Customer: {request.customerName}</span>
+                              <span className="table-subtext block-text">{request.customerEmail}</span>
+                              <span className="table-subtext block-text">Reason: {request.reason || 'No reason provided'}</span>
+                            </td>
+                            <td>
+                              <p>{request.sellerName}</p>
+                              <span className="table-subtext block-text">{request.sellerEmail || 'System Store'}</span>
+                              <span className="table-subtext">Refund: {formatCurrency(request.returnAmount)}</span>
+                              <span className="table-subtext block-text">Return delivery: {formatCurrency(request.deliveryFee)}</span>
+                              <span className="table-subtext block-text payout-amount">Total debit: {formatCurrency(request.debitAmount)}</span>
+                            </td>
+                            <td>
+                              <p>{request.deliveryPartnerName}</p>
+                              <span className="table-subtext block-text">{request.deliveryPartnerEmail || 'Delivery boy not accepted yet'}</span>
+                              <span className="table-subtext block-text">Pickup: {request.order.deliveryAddress || 'Customer address missing'}</span>
+                            </td>
+                            <td>
+                              <span className={`status-badge ${statusClass(request.status)}`}>{request.status || 'Pending'}</span>
+                              {request.approvedDate > 0 && <span className="table-subtext block-text">Approved: {new Date(Number(request.approvedDate)).toLocaleString()}</span>}
+                            </td>
+                            <td>
+                              <div className="actions-row">
+                                <button className="btn btn-primary btn-sm" onClick={() => updateReturnRequest(request.orderId, request.id, { status: 'Approved' })}>
+                                  Approve
+                                </button>
+                                <button className="btn btn-secondary btn-sm" onClick={() => updateReturnRequest(request.orderId, request.id, { status: 'Pending', deliveryPartnerEmail: '' })}>
+                                  Pending
+                                </button>
+                                <button className="btn btn-secondary btn-sm" onClick={() => updateReturnRequest(request.orderId, request.id, { status: 'Completed' })}>
+                                  Complete
+                                </button>
+                                <button className="btn btn-danger btn-sm" onClick={() => updateReturnRequest(request.orderId, request.id, { status: 'Rejected', deliveryPartnerEmail: '' })}>
+                                  Reject
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {activeTab === 'payments' && (
+              <PaymentsTab
+                entries={settlementEntries}
+                totals={settlementTotals}
+                payoutAccounts={payoutAccounts}
+                withdrawalRequests={withdrawalRequests}
+                onUpdateWithdrawalStatus={updateWithdrawalStatus}
+                users={users}
+              />
+            )}
+
+            {activeTab === 'categories' && (
+              <div className="glass-panel section-card">
+                <div className="section-header stacked-section-header">
+                  <h2>Category Return Controls</h2>
+                </div>
+
+                <form className="form-grid" onSubmit={handleCreateCategory}>
+                  <div className="form-group">
+                    <label className="form-label">Category Name</label>
+                    <input
+                      className="form-control"
+                      value={newCategoryName}
+                      onChange={e => setNewCategoryName(e.target.value)}
+                      placeholder="e.g. Electronics, Food, Vegetables"
+                      required
+                    />
+                  </div>
+                  <div className="form-group checkbox-row">
+                    <input
+                      type="checkbox"
+                      id="category-returnable"
+                      checked={newCategoryReturnable}
+                      onChange={e => setNewCategoryReturnable(e.target.checked)}
+                      disabled={['food', 'vegetables'].includes(newCategoryName.trim().toLowerCase())}
+                    />
+                    <label htmlFor="category-returnable">
+                      Returnable category
+                    </label>
+                  </div>
+                  <div className="form-actions">
+                    <button className="btn btn-primary" type="submit">
+                      <Plus size={16} /> Save Category
+                    </button>
+                  </div>
+                </form>
+
+                {categories.length === 0 ? (
+                  <Empty icon={Settings} title="No Categories Found" text="Add categories so sellers can select them during product listing." />
+                ) : (
+                  <div className="table-container">
+                    <table className="modern-table">
+                      <thead>
+                        <tr>
+                          <th>Category</th>
+                          <th>Return Rule</th>
+                          <th>Manage</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {categories.map(category => {
+                          const locked = ['food', 'vegetables'].includes(category.name.toLowerCase());
+                          return (
+                            <tr key={category.name}>
+                              <td>
+                                <p className="accent-text">{category.name}</p>
+                                {locked && <span className="table-subtext">Always non-returnable</span>}
+                              </td>
+                              <td>
+                                <span className={`status-badge ${category.isReturnable ? 'verified' : 'rejected'}`}>
+                                  {category.isReturnable ? 'Returnable' : 'Non-returnable'}
+                                </span>
+                              </td>
+                              <td>
+                                <div className="actions-row">
+                                  <button className="btn btn-secondary btn-sm" onClick={() => toggleCategoryReturnable(category)} disabled={locked}>
+                                    {category.isReturnable ? 'Mark Non-returnable' : 'Mark Returnable'}
+                                  </button>
+                                  <button className="btn btn-danger btn-sm" onClick={() => deleteCategory(category.name)}>
+                                    <Trash2 size={14} />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
             {activeTab === 'coupons' && (
               <div className="glass-panel section-card">
                 <div className="section-header stacked-section-header">
@@ -1223,7 +1940,14 @@ function App() {
               </div>
               <div className="form-group">
                 <label className="form-label">Category</label>
-                <input type="text" className="form-control" value={newProductCat} onChange={e => setNewProductCat(e.target.value)} />
+                <select className="form-control" value={newProductCat} onChange={e => setNewProductCat(e.target.value)} required>
+                  <option value="">Select category</option>
+                  {categories.map(category => (
+                    <option key={category.name} value={category.name}>
+                      {category.name} ({category.isReturnable ? 'Returnable' : 'Non-returnable'})
+                    </option>
+                  ))}
+                </select>
               </div>
               <div className="form-group">
                 <label className="form-label">Seller Email Owner</label>
@@ -1423,6 +2147,301 @@ function ProductsTab({ products, setShowProductModal, toggleProductFeatured, del
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+function PaymentsTab({ entries, totals, payoutAccounts, withdrawalRequests, onUpdateWithdrawalStatus, users }) {
+  const returnRows = entries.flatMap(entry =>
+    entry.returns.map(request => ({
+      ...request,
+      orderId: entry.order.orderId,
+      buyerEmail: entry.buyerEmail,
+      productName: request.productName || `Product #${request.productId || 'N/A'}`
+    }))
+  );
+
+  return (
+    <div>
+      <div className="mini-metrics-grid">
+        <Metric title="Customer Paid" value={formatCurrency(totals.paid)} icon={CreditCard} compact />
+        <Metric title="Seller Receivable" value={formatCurrency(totals.sellers)} icon={ShoppingBag} compact />
+        <Metric title="Delivery Receivable" value={formatCurrency(totals.delivery)} icon={Truck} compact />
+        <Metric title="Return Debit" value={formatCurrency(totals.returnDebit)} icon={RefreshCw} compact />
+        <Metric title="Payout Ready" value={formatCurrency(totals.payoutReady)} icon={CheckCircle} compact />
+        <Metric title="Payout Pending" value={formatCurrency(totals.payoutPending)} icon={Clock} compact />
+      </div>
+
+      <div className="glass-panel section-card">
+        <div className="section-header stacked-section-header">
+          <h2><CreditCard size={20} /> Payment Details</h2>
+        </div>
+
+        {entries.length === 0 ? (
+          <Empty icon={CreditCard} title="No Payments Found" text="Customer payment and payout details will appear after orders are placed." />
+        ) : (
+          <div className="table-container settlement-table-container">
+            <table className="modern-table settlement-table">
+              <thead>
+                <tr>
+                  <th>Order & User</th>
+                  <th>Payment</th>
+                  <th>Product Seller Split</th>
+                  <th>Delivery Boy</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {entries.map(entry => (
+                  <tr key={entry.order.orderId}>
+                    <td>
+                      <p className="accent-text">{entry.order.orderId}</p>
+                      <span className="table-subtext">{entry.buyerName}</span>
+                      <span className="table-subtext block-text">{entry.buyerEmail}</span>
+                      <span className="table-subtext block-text">{new Date(Number(entry.order.orderDate || 0)).toLocaleString()}</span>
+                    </td>
+                    <td>
+                      <p className="accent-text">{formatCurrency(entry.totalPaid)}</p>
+                      <span className="table-subtext">{entry.order.paymentMode || 'COD'}</span>
+                      {entry.order.paymentTransactionId && (
+                        <span className="table-subtext block-text">Txn: {entry.order.paymentTransactionId}</span>
+                      )}
+                      {entry.order.couponApplied && <span className="status-badge verified">{entry.order.couponApplied}</span>}
+                    </td>
+                    <td>
+                      <div className="settlement-lines">
+                        {entry.items.length === 0 ? (
+                          <span className="table-subtext">No product mapping found</span>
+                        ) : (
+                          entry.items.map((item, index) => (
+                            <div className="settlement-line" key={`${entry.order.orderId}-${item.productId || item.productName}-${index}`}>
+                              <div>
+                                <p>{item.productName}</p>
+                                <span className="table-subtext">
+                                  Qty {item.quantity} x {formatCurrency(item.unitPrice)} | Seller: {item.sellerName}
+                                </span>
+                                {item.sellerEmail && <span className="table-subtext block-text">{item.sellerEmail}</span>}
+                              </div>
+                              <strong>{formatCurrency(item.sellerReceivable)}</strong>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </td>
+                    <td>
+                      {entry.deliveryPartnerEmail ? (
+                        <>
+                          <p>{entry.deliveryPartnerName}</p>
+                          <span className="table-subtext">{entry.deliveryPartnerEmail}</span>
+                          <p className="accent-text payout-amount">{formatCurrency(entry.deliveryEarning)}</p>
+                        </>
+                      ) : (
+                        <>
+                          <span className="status-badge pending">Not Accepted</span>
+                          <p className="table-subtext payout-amount">{formatCurrency(entry.deliveryEarning)} pending</p>
+                        </>
+                      )}
+                    </td>
+                    <td>
+                      <span className={`status-badge ${statusClass(entry.order.status)}`}>{entry.order.status || 'Pending'}</span>
+                      <span className="table-subtext block-text">{entry.order.deliveryStatus || 'Delivery not started'}</span>
+                      {isDeliveredOrder(entry.order) && (
+                        <span className="table-subtext block-text">
+                          Return window: {entry.returnWindowEnd ? new Date(entry.returnWindowEnd).toLocaleDateString() : 'N/A'}
+                        </span>
+                      )}
+                      <span className={`status-badge ${entry.payoutReady ? 'verified' : 'pending'}`}>
+                        {entry.payoutReady ? 'Withdraw Ready' : 'Withdraw Pending'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="glass-panel section-card">
+        <div className="section-header stacked-section-header">
+          <h2><RefreshCw size={20} /> Return Debit Details</h2>
+        </div>
+
+        {returnRows.length === 0 ? (
+          <Empty icon={RefreshCw} title="No Return Debits" text="Approved or completed return deductions will appear here." />
+        ) : (
+          <div className="table-container settlement-table-container">
+            <table className="modern-table return-table">
+              <thead>
+                <tr>
+                  <th>Return</th>
+                  <th>Seller Account</th>
+                  <th>Debit Breakup</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {returnRows.map(request => (
+                  <tr key={`${request.orderId}-${request.id}`}>
+                    <td>
+                      <p className="accent-text">{request.id || 'Return Request'}</p>
+                      <span className="table-subtext">Order: {request.orderId}</span>
+                      <span className="table-subtext block-text">Buyer: {request.buyerEmail}</span>
+                      <span className="table-subtext block-text">{request.productName}</span>
+                    </td>
+                    <td>
+                      <p>{request.sellerName}</p>
+                      <span className="table-subtext">{request.sellerEmail || 'System Store'}</span>
+                    </td>
+                    <td>
+                      <p className="accent-text">{formatCurrency(request.debitAmount)}</p>
+                      <span className="table-subtext">Refund: {formatCurrency(request.returnAmount)}</span>
+                      <span className="table-subtext block-text">Return delivery: {formatCurrency(request.deliveryFee)}</span>
+                    </td>
+                    <td>
+                      <span className={`status-badge ${request.isCompleted ? 'cancelled' : 'pending'}`}>
+                        {request.isCompleted ? 'Actual Debit' : 'Expected Debit'}
+                      </span>
+                      <span className="table-subtext block-text">{request.status || 'Pending'}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="glass-panel section-card">
+        <div className="section-header stacked-section-header">
+          <h2><CheckCircle size={20} /> Withdraw Pending / Ready</h2>
+          <p className="section-note">Return window: {RETURN_WINDOW_DAYS} days after delivery. Ready amount can be paid to the listed bank account.</p>
+        </div>
+
+        {payoutAccounts.length === 0 ? (
+          <Empty icon={CheckCircle} title="No Payout Accounts" text="Seller and delivery partner payout rows will appear after delivered orders." />
+        ) : (
+          <div className="table-container settlement-table-container">
+            <table className="modern-table payout-table">
+              <thead>
+                <tr>
+                  <th>Account</th>
+                  <th>Bank Details</th>
+                  <th>Ready To Pay</th>
+                  <th>Pending</th>
+                  <th>Return Debits</th>
+                  <th>Orders</th>
+                </tr>
+              </thead>
+              <tbody>
+                {payoutAccounts.map(account => (
+                  <tr key={account.key}>
+                    <td>
+                      <p>{account.name}</p>
+                      <span className={`role-chip role-${account.role.toLowerCase()}`}>{roleLabel(account.role)}</span>
+                      <span className="table-subtext block-text">{account.email || 'System account'}</span>
+                    </td>
+                    <td className="muted-cell">
+                      <p>{account.bankDetails}</p>
+                    </td>
+                    <td>
+                      <p className="accent-text">{formatCurrency(account.readyAmount)}</p>
+                      <span className="status-badge verified">Withdraw Ready</span>
+                    </td>
+                    <td>
+                      <p>{formatCurrency(account.pendingAmount)}</p>
+                      <span className="status-badge pending">Return Window Pending</span>
+                    </td>
+                    <td>
+                      <p className="status-badge cancelled">{formatCurrency(account.returnDebits)} cut</p>
+                      {account.expectedReturnDebits > 0 && (
+                        <span className="table-subtext block-text">Expected: {formatCurrency(account.expectedReturnDebits)}</span>
+                      )}
+                    </td>
+                    <td className="muted-cell">
+                      <p>{account.orders.join(', ')}</p>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="glass-panel section-card">
+        <div className="section-header stacked-section-header">
+          <h2><CreditCard size={20} /> Withdrawal Requests</h2>
+          <p className="section-note">Admin can mark each request as Pending, Success, or Rejected.</p>
+        </div>
+
+        {withdrawalRequests.length === 0 ? (
+          <Empty icon={CreditCard} title="No Withdrawal Requests" text="Seller and delivery partner withdrawal requests will appear here." />
+        ) : (
+          <div className="table-container settlement-table-container">
+            <table className="modern-table payout-table">
+              <thead>
+                <tr>
+                  <th>Request</th>
+                  <th>Account</th>
+                  <th>Amount</th>
+                  <th>Bank Details</th>
+                  <th>Status</th>
+                  <th>Admin Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {withdrawalRequests.map(request => {
+                  const accountEmail = request.accountEmail || request.deliveryPartnerEmail || '';
+                  const accountName = getDisplayNameByEmail(users, accountEmail, accountEmail || 'Account');
+
+                  return (
+                    <tr key={request.id}>
+                      <td>
+                        <p className="accent-text">{request.id}</p>
+                        <span className="table-subtext">{new Date(Number(request.requestDate || 0)).toLocaleString()}</span>
+                        {request.payoutId && <span className="table-subtext block-text">Payout: {request.payoutId}</span>}
+                      </td>
+                      <td>
+                        <p>{accountName}</p>
+                        <span className={`role-chip role-${(request.accountRole || 'DeliveryPartner').toLowerCase()}`}>{roleLabel(request.accountRole)}</span>
+                        <span className="table-subtext block-text">{accountEmail}</span>
+                      </td>
+                      <td>
+                        <p className="accent-text">{formatCurrency(request.amount)}</p>
+                      </td>
+                      <td className="muted-cell">
+                        <p>{request.bankDetails || 'Bank details not available'}</p>
+                        {request.failureReason && <span className="table-subtext block-text">Reason: {request.failureReason}</span>}
+                      </td>
+                      <td>
+                        <span className={`status-badge ${withdrawalStatusClass(request.status)}`}>
+                          {withdrawalStatusLabel(request.status)}
+                        </span>
+                        <span className="table-subtext block-text">{request.status || 'Scheduled'}</span>
+                      </td>
+                      <td>
+                        <div className="actions-row">
+                          {WITHDRAWAL_STATUS_ACTIONS.map(action => (
+                            <button
+                              key={action.status}
+                              className={`btn btn-sm ${action.className === 'cancelled' ? 'btn-danger' : action.className === 'verified' ? 'btn-primary' : 'btn-secondary'}`}
+                              onClick={() => onUpdateWithdrawalStatus(request.id, action.status)}
+                              disabled={request.status === action.status}
+                            >
+                              {action.label}
+                            </button>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

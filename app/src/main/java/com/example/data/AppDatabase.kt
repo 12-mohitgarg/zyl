@@ -12,6 +12,8 @@ import kotlin.coroutines.suspendCoroutine
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.suspendCancellableCoroutine
+import org.json.JSONArray
+import org.json.JSONObject
 
 // --- Entity: User ---
 @Entity(tableName = "users")
@@ -134,7 +136,8 @@ data class Order(
     val sellerChangeDeliveryBoyRequested: Boolean = false,
     val paymentMode: String = "COD",
     val paymentTransactionId: String = "",
-    val productQuantities: String = ""
+    val productQuantities: String = "",
+    val returnRequestsJson: String = "[]"
 )
 
 // --- Dynamic Config Data Classes (Firestore-only, not Room entities) ---
@@ -177,6 +180,76 @@ data class AppConfig(
     val servicePincodes: List<String> = emptyList(),
     val payoutDelayHours: Int = 24
 )
+
+data class CategoryConfig(
+    val name: String = "",
+    val isReturnable: Boolean = true
+)
+
+data class ReturnRequest(
+    val id: String = "",
+    val productId: Int = 0,
+    val productName: String = "",
+    val sellerEmail: String = "",
+    val customerEmail: String = "",
+    val photoUrl: String = "",
+    val reason: String = "",
+    val status: String = "Pending",
+    val requestDate: Long = 0L,
+    val approvedDate: Long = 0L,
+    val returnAmount: Double = 0.0,
+    val deliveryFee: Double = 0.0,
+    val deliveryPartnerEmail: String = ""
+)
+
+fun deserializeReturnRequests(json: String): List<ReturnRequest> {
+    if (json.isBlank()) return emptyList()
+    return try {
+        val array = JSONArray(json)
+        (0 until array.length()).map { index ->
+            val obj = array.getJSONObject(index)
+            ReturnRequest(
+                id = obj.optString("id"),
+                productId = obj.optInt("productId"),
+                productName = obj.optString("productName"),
+                sellerEmail = obj.optString("sellerEmail"),
+                customerEmail = obj.optString("customerEmail"),
+                photoUrl = obj.optString("photoUrl"),
+                reason = obj.optString("reason"),
+                status = obj.optString("status", "Pending"),
+                requestDate = obj.optLong("requestDate"),
+                approvedDate = obj.optLong("approvedDate"),
+                returnAmount = obj.optDouble("returnAmount"),
+                deliveryFee = obj.optDouble("deliveryFee"),
+                deliveryPartnerEmail = obj.optString("deliveryPartnerEmail")
+            )
+        }
+    } catch (e: Exception) {
+        emptyList()
+    }
+}
+
+fun serializeReturnRequests(requests: List<ReturnRequest>): String {
+    val array = JSONArray()
+    requests.forEach { request ->
+        array.put(JSONObject().apply {
+            put("id", request.id)
+            put("productId", request.productId)
+            put("productName", request.productName)
+            put("sellerEmail", request.sellerEmail)
+            put("customerEmail", request.customerEmail)
+            put("photoUrl", request.photoUrl)
+            put("reason", request.reason)
+            put("status", request.status)
+            put("requestDate", request.requestDate)
+            put("approvedDate", request.approvedDate)
+            put("returnAmount", request.returnAmount)
+            put("deliveryFee", request.deliveryFee)
+            put("deliveryPartnerEmail", request.deliveryPartnerEmail)
+        })
+    }
+    return array.toString()
+}
 
 // --- DAO Interface ---
 @Dao
@@ -262,7 +335,7 @@ interface AppDao {
 // --- App Database ---
 @Database(
     entities = [User::class, Product::class, CartItem::class, WishlistItem::class, Order::class],
-    version = 9,
+    version = 10,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -478,7 +551,8 @@ class AppRepository(private val appDao: AppDao) {
             sellerChangeDeliveryBoyRequested = map["sellerChangeDeliveryBoyRequested"] as? Boolean ?: false,
             paymentMode = map["paymentMode"] as? String ?: "COD",
             paymentTransactionId = map["paymentTransactionId"] as? String ?: "",
-            productQuantities = map["productQuantities"] as? String ?: ""
+            productQuantities = map["productQuantities"] as? String ?: "",
+            returnRequestsJson = map["returnRequestsJson"] as? String ?: "[]"
         )
     }
 
@@ -506,7 +580,8 @@ class AppRepository(private val appDao: AppDao) {
             "sellerChangeDeliveryBoyRequested" to o.sellerChangeDeliveryBoyRequested,
             "paymentMode" to o.paymentMode,
             "paymentTransactionId" to o.paymentTransactionId,
-            "productQuantities" to o.productQuantities
+            "productQuantities" to o.productQuantities,
+            "returnRequestsJson" to o.returnRequestsJson
         )
     }
 
@@ -619,6 +694,14 @@ class AppRepository(private val appDao: AppDao) {
                     .set(userToMap(user))
                     .awaitTask()
             }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    suspend fun upsertUserLocal(user: User) {
+        try {
+            appDao.insertUser(user)
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -1028,6 +1111,27 @@ class AppRepository(private val appDao: AppDao) {
         awaitClose { listener.remove() }
     }
 
+    fun getAllCategories(): Flow<List<CategoryConfig>> = callbackFlow {
+        val listener = FirebaseFirestore.getInstance()
+            .collection("categories")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    error.printStackTrace()
+                    trySend(defaultCategoryConfigs())
+                    return@addSnapshotListener
+                }
+                val list = snapshot?.documents?.mapNotNull { doc ->
+                    val name = doc.getString("name") ?: doc.id
+                    if (name.isBlank()) null else CategoryConfig(
+                        name = name,
+                        isReturnable = doc.getBoolean("isReturnable") ?: !name.isNonReturnableCategory()
+                    )
+                }.orEmpty()
+                trySend(if (list.isEmpty()) defaultCategoryConfigs() else list.sortedBy { it.name })
+            }
+        awaitClose { listener.remove() }
+    }
+
     @Suppress("UNCHECKED_CAST")
     fun getAppConfig(): Flow<AppConfig> = callbackFlow {
         val listener = FirebaseFirestore.getInstance()
@@ -1139,6 +1243,22 @@ class AppRepository(private val appDao: AppDao) {
         }
     }
 
+    suspend fun seedCategories() {
+        try {
+            val db = FirebaseFirestore.getInstance()
+            val snapshot = db.collection("categories").get().awaitTask()
+            if (snapshot.isEmpty) {
+                defaultCategoryConfigs().forEach { category ->
+                    db.collection("categories").document(category.name).set(
+                        mapOf("name" to category.name, "isReturnable" to category.isReturnable)
+                    ).awaitTask()
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     suspend fun seedAppConfig() {
         try {
             val db = FirebaseFirestore.getInstance()
@@ -1159,3 +1279,17 @@ class AppRepository(private val appDao: AppDao) {
         }
     }
 }
+
+fun String.isNonReturnableCategory(): Boolean {
+    val normalized = trim().lowercase()
+    return normalized == "food" || normalized == "vegetables"
+}
+
+fun defaultCategoryConfigs(): List<CategoryConfig> = listOf(
+    CategoryConfig("Electronics", true),
+    CategoryConfig("Fashion", true),
+    CategoryConfig("Fresh Products", true),
+    CategoryConfig("Home & Kitchen", true),
+    CategoryConfig("Food", false),
+    CategoryConfig("Vegetables", false)
+)

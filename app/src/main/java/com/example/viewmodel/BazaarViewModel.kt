@@ -219,7 +219,8 @@ fun Order.toMap(): Map<String, Any> {
         "sellerChangeDeliveryBoyRequested" to sellerChangeDeliveryBoyRequested,
         "paymentMode" to paymentMode,
         "paymentTransactionId" to paymentTransactionId,
-        "productQuantities" to productQuantities
+        "productQuantities" to productQuantities,
+        "returnRequestsJson" to returnRequestsJson
     )
 }
 
@@ -248,7 +249,8 @@ fun Map<String, Any?>.toOrder(): Order {
         sellerChangeDeliveryBoyRequested = this["sellerChangeDeliveryBoyRequested"] as? Boolean ?: false,
         paymentMode = this["paymentMode"] as? String ?: "COD",
         paymentTransactionId = this["paymentTransactionId"] as? String ?: "",
-        productQuantities = this["productQuantities"] as? String ?: ""
+        productQuantities = this["productQuantities"] as? String ?: "",
+        returnRequestsJson = this["returnRequestsJson"] as? String ?: "[]"
     )
 }
 
@@ -450,10 +452,12 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
     val appConfig: StateFlow<AppConfig> = repository.getAppConfig()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AppConfig())
 
-    // Dynamic categories derived from appConfig
-    val categories: StateFlow<List<String>> = appConfig
-        .map { it.categories }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), listOf("All", "Electronics", "Fresh Products", "Fashion", "Home & Kitchen"))
+    val categoryConfigs: StateFlow<List<CategoryConfig>> = repository.getAllCategories()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), defaultCategoryConfigs())
+
+    val categories: StateFlow<List<String>> = categoryConfigs
+        .map { configs -> listOf("All") + configs.map { it.name } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), listOf("All", "Electronics", "Fresh Products", "Fashion", "Home & Kitchen", "Food", "Vegetables"))
 
     // Dynamic languages derived from appConfig
     val languages: StateFlow<List<String>> = appConfig
@@ -480,10 +484,9 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
         
         if (!emailToCheck.isNullOrBlank()) {
             viewModelScope.launch {
-                val user = repository.getUser(emailToCheck)
+                val user = refreshSessionData(emailToCheck) ?: repository.getUser(emailToCheck)
                 if (user != null) {
-                    _currentUser.value = user
-                    _authState.value = AuthState.Success(user)
+                    setActiveUser(user)
                 }
             }
         }
@@ -574,7 +577,12 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
                         doc.data?.toUser()
                     }
                     viewModelScope.launch {
-                        userList.forEach { repository.insertUser(it) }
+                        userList.forEach { repository.upsertUserLocal(it) }
+                        val activeEmail = _currentUser.value?.email
+                        if (!activeEmail.isNullOrBlank()) {
+                            userList.firstOrNull { it.email.equals(activeEmail, ignoreCase = true) }
+                                ?.let { setActiveUser(it) }
+                        }
                     }
                 }
             }
@@ -709,6 +717,7 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             // Seed dynamic config collections only (do not seed any dummy products)
             repository.seedBanners()
+            repository.seedCategories()
             repository.seedCoupons()
             repository.seedShortcuts()
             repository.seedAppConfig()
@@ -775,21 +784,25 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
                         }
 
                         // Save local copy
-                        repository.insertUser(user)
-                        _currentUser.value = user
-                        _authState.value = AuthState.Success(user)
+                        repository.upsertUserLocal(user)
+                        setActiveUser(user)
+                        refreshSessionData(user.email)?.let { fresh ->
+                            if (fresh.role == role) setActiveUser(fresh)
+                        }
                         return@launch
                     }
                 }
 
                 // If firebase auth was unsuccessful or timed out, fall back to offline local database
-                val localUser = repository.getUser(email)
+                val localUser = repository.getUser(cleanEmail)
                 if (localUser != null && localUser.password == pword) {
                     if (localUser.role != role) {
                         _authState.value = AuthState.Error("Incorrect account type selected. This email is registered as a ${localUser.role}.")
                     } else {
-                        _currentUser.value = localUser
-                        _authState.value = AuthState.Success(localUser)
+                        setActiveUser(localUser)
+                        refreshSessionData(localUser.email)?.let { fresh ->
+                            if (fresh.role == role) setActiveUser(fresh)
+                        }
                     }
                 } else {
                     _authState.value = AuthState.Error("Authentication failed. Check your credentials or internet connection.")
@@ -797,13 +810,15 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
             } catch (e: Exception) {
                 e.printStackTrace()
                 // Graceful fallback to offline local database if offline / network error
-                val localUser = repository.getUser(email)
+                val localUser = repository.getUser(cleanEmail)
                 if (localUser != null && localUser.password == pword) {
                     if (localUser.role != role) {
                         _authState.value = AuthState.Error("Incorrect account type selected. This email is registered as a ${localUser.role}.")
                     } else {
-                        _currentUser.value = localUser
-                        _authState.value = AuthState.Success(localUser)
+                        setActiveUser(localUser)
+                        refreshSessionData(localUser.email)?.let { fresh ->
+                            if (fresh.role == role) setActiveUser(fresh)
+                        }
                     }
                 } else {
                     val errorMsg = e.localizedMessage ?: "Authentication failed. Check your credentials or internet connection."
@@ -917,8 +932,10 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
                 // Regardless of Firebase timing out or failing (offline), register user in local Room database
                 repository.insertUser(newUser)
                 _newlyRegisteredUser.value = newUser
-                _currentUser.value = newUser
-                _authState.value = AuthState.Success(newUser)
+                setActiveUser(newUser)
+                refreshSessionData(newUser.email)?.let { fresh ->
+                    if (fresh.role == role) setActiveUser(fresh)
+                }
 
                 if (firebaseSuccess == true) {
                     // Successfully registered to both Firebase and Room!
@@ -931,8 +948,10 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
                 try {
                     repository.insertUser(newUser)
                     _newlyRegisteredUser.value = newUser
-                    _currentUser.value = newUser
-                    _authState.value = AuthState.Success(newUser)
+                    setActiveUser(newUser)
+                    refreshSessionData(newUser.email)?.let { fresh ->
+                        if (fresh.role == role) setActiveUser(fresh)
+                    }
                 } catch (localEx: Exception) {
                     val errorMsg = e.localizedMessage ?: "Registration failed. Please check network connection."
                     _authState.value = AuthState.Error(errorMsg)
@@ -1282,18 +1301,246 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
 
     fun updateOrderStatus(orderId: String, newStatus: String) {
         viewModelScope.launch {
-            val orderList = allOrders.value
-            val found = orderList.find { it.orderId == orderId } ?: return@launch
-            val updated = found.copy(status = newStatus)
-            repository.updateOrder(updated)
             try {
-                FirebaseFirestore.getInstance().collection("orders")
-                    .document(orderId)
-                    .update("status", newStatus)
+                val orderList = allOrders.value
+                val found = orderList.find { it.orderId == orderId } ?: run {
+                    emitUserMessage("Order not found. Please refresh and try again.")
+                    return@launch
+                }
+                val updated = found.copy(status = newStatus)
+                repository.updateOrder(updated)
+                try {
+                    FirebaseFirestore.getInstance().collection("orders")
+                        .document(orderId)
+                        .update("status", newStatus)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
             } catch (e: Exception) {
                 e.printStackTrace()
+                emitUserMessage("Unable to update order. Please try again.")
             }
         }
+    }
+
+    private fun setActiveUser(user: User) {
+        _currentUser.value = user
+        _authState.value = AuthState.Success(user)
+    }
+
+    private suspend fun refreshSessionData(email: String): User? {
+        val cleanEmail = email.trim().lowercase()
+        val db = FirebaseFirestore.getInstance()
+        var freshUser: User? = null
+
+        try {
+            val userDoc = kotlinx.coroutines.withTimeoutOrNull(8000L) {
+                db.collection("users").document(cleanEmail).get().awaitTask()
+            }
+            freshUser = userDoc?.data?.toUser()
+            freshUser?.let { repository.upsertUserLocal(it) }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        try {
+            val usersSnapshot = kotlinx.coroutines.withTimeoutOrNull(8000L) {
+                db.collection("users").get().awaitTask()
+            }
+            usersSnapshot?.documents
+                ?.mapNotNull { it.data?.toUser() }
+                ?.forEach {
+                    repository.upsertUserLocal(it)
+                    if (it.email.equals(cleanEmail, ignoreCase = true)) freshUser = it
+                }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        try {
+            val ordersSnapshot = kotlinx.coroutines.withTimeoutOrNull(8000L) {
+                db.collection("orders").get().awaitTask()
+            }
+            ordersSnapshot?.documents
+                ?.mapNotNull { doc ->
+                    doc.data?.toOrder()?.let { order ->
+                        if (order.orderId.isBlank()) order.copy(orderId = doc.id) else order
+                    }
+                }
+                ?.forEach { repository.upsertOrderLocal(it) }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        try {
+            val productsSnapshot = kotlinx.coroutines.withTimeoutOrNull(8000L) {
+                db.collection("products").get().awaitTask()
+            }
+            val products = productsSnapshot?.documents
+                ?.mapNotNull { it.data?.toProduct() }
+                .orEmpty()
+            if (products.isNotEmpty()) repository.insertProducts(products)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        try {
+            repository.syncCartFromFirestore(cleanEmail)
+            repository.syncWishlistFromFirestore(cleanEmail)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        return freshUser
+    }
+
+    fun submitReturnRequest(
+        orderId: String,
+        product: Product,
+        reason: String,
+        photoUrl: String
+    ) {
+        val user = _currentUser.value ?: return
+        viewModelScope.launch {
+            val found = allOrders.value.find { it.orderId == orderId } ?: currentOrders.value.find { it.orderId == orderId } ?: return@launch
+            if (!found.status.equals("Delivered", ignoreCase = true) && !found.deliveryStatus.equals("Delivered", ignoreCase = true)) {
+                emitUserMessage("Returns are available only after delivery.")
+                return@launch
+            }
+            val category = categoryConfigs.value.find { it.name.equals(product.category, ignoreCase = true) }
+            val returnable = category?.isReturnable ?: !product.category.isNonReturnableCategory()
+            if (!returnable) {
+                emitUserMessage("${product.category} items are not returnable.")
+                return@launch
+            }
+            if (reason.isBlank() || photoUrl.isBlank()) {
+                emitUserMessage("Please add a product photo and reason.")
+                return@launch
+            }
+            val existing = deserializeReturnRequests(found.returnRequestsJson)
+            if (existing.any { it.productId == product.id && it.status != "Rejected" }) {
+                emitUserMessage("Return request already exists for this product.")
+                return@launch
+            }
+            val deliveryFee = found.deliveryCharge.takeIf { it > 0.0 }
+                ?: calculateDeliveryCharge(
+                    found.itemsAmount.takeIf { it > 0.0 } ?: found.totalAmount,
+                    found.deliveryDistanceKm.takeIf { it > 0.0 } ?: estimateDeliveryDistanceKm(found.orderId)
+                ).totalCharge
+            val request = ReturnRequest(
+                id = "RET-" + UUID.randomUUID().toString().take(8).uppercase(),
+                productId = product.id,
+                productName = product.name,
+                sellerEmail = product.sellerEmail,
+                customerEmail = user.email,
+                photoUrl = photoUrl,
+                reason = reason.trim(),
+                status = "Pending",
+                requestDate = System.currentTimeMillis(),
+                returnAmount = product.price,
+                deliveryFee = deliveryFee
+            )
+            val updated = found.copy(returnRequestsJson = serializeReturnRequests(existing + request))
+            repository.updateOrder(updated)
+            emitUserMessage("Return request sent to seller.")
+        }
+    }
+
+    fun updateReturnRequestStatus(orderId: String, requestId: String, status: String) {
+        viewModelScope.launch {
+            try {
+                val safeStatus = when (status) {
+                    "Approved", "Rejected" -> status
+                    else -> {
+                        emitUserMessage("Invalid return request action.")
+                        return@launch
+                    }
+                }
+                val found = findOrderForReturnMutation(orderId) ?: run {
+                    emitUserMessage("Order not found. Please refresh and try again.")
+                    return@launch
+                }
+                var didUpdate = false
+                val updatedRequests = deserializeReturnRequests(found.returnRequestsJson).map { request ->
+                    if (request.id == requestId) {
+                        didUpdate = true
+                        request.copy(
+                            status = safeStatus,
+                            approvedDate = if (safeStatus == "Approved" && request.approvedDate == 0L) System.currentTimeMillis() else request.approvedDate
+                        )
+                    } else {
+                        request
+                    }
+                }
+                if (!didUpdate) {
+                    emitUserMessage("Return request not found. Please refresh and try again.")
+                    return@launch
+                }
+                persistReturnRequests(found, updatedRequests)
+                emitUserMessage(if (safeStatus == "Approved") "Return request approved." else "Return request rejected.")
+            } catch (e: Exception) {
+                e.printStackTrace()
+                emitUserMessage("Unable to update return request. Please try again.")
+            }
+        }
+    }
+
+    fun acceptReturnPickup(orderId: String, requestId: String, deliveryPartnerEmail: String) {
+        viewModelScope.launch {
+            val found = findOrderForReturnMutation(orderId) ?: return@launch
+            val updatedRequests = deserializeReturnRequests(found.returnRequestsJson).map { request ->
+                if (request.id == requestId && request.status == "Approved" && request.deliveryPartnerEmail.isBlank()) {
+                    request.copy(status = "Pickup Accepted", deliveryPartnerEmail = deliveryPartnerEmail)
+                } else {
+                    request
+                }
+            }
+            persistReturnRequests(found, updatedRequests)
+        }
+    }
+
+    fun completeReturnPickup(orderId: String, requestId: String) {
+        viewModelScope.launch {
+            val found = findOrderForReturnMutation(orderId) ?: return@launch
+            val updatedRequests = deserializeReturnRequests(found.returnRequestsJson).map { request ->
+                if (request.id == requestId) request.copy(status = "Completed") else request
+            }
+            persistReturnRequests(found, updatedRequests)
+        }
+    }
+
+    private suspend fun findOrderForReturnMutation(orderId: String): Order? {
+        val remoteOrder = try {
+            kotlinx.coroutines.withTimeoutOrNull(5000L) {
+                val snapshot = FirebaseFirestore.getInstance()
+                    .collection("orders")
+                    .document(orderId)
+                    .get()
+                    .awaitTask()
+                snapshot.data?.toOrder()?.let { order ->
+                    if (order.orderId.isBlank()) order.copy(orderId = snapshot.id) else order
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+
+        return remoteOrder
+            ?: allOrders.value.find { it.orderId == orderId }
+            ?: currentOrders.value.find { it.orderId == orderId }
+    }
+
+    private suspend fun persistReturnRequests(order: Order, requests: List<ReturnRequest>) {
+        val updatedJson = serializeReturnRequests(requests)
+        val updatedOrder = order.copy(returnRequestsJson = updatedJson)
+
+        FirebaseFirestore.getInstance()
+            .collection("orders")
+            .document(order.orderId)
+            .update("returnRequestsJson", updatedJson)
+            .awaitTask()
+        repository.upsertOrderLocal(updatedOrder)
     }
 
     fun applyShopEditRequest(
@@ -1427,9 +1674,12 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
 
     fun confirmOrderReady(orderId: String) {
         viewModelScope.launch {
-            val orderList = allOrders.value
-            val found = orderList.find { it.orderId == orderId }
-            if (found != null) {
+            try {
+                val orderList = allOrders.value
+                val found = orderList.find { it.orderId == orderId } ?: run {
+                    emitUserMessage("Order not found. Please refresh and try again.")
+                    return@launch
+                }
                 val updated = found.copy(sellerConfirmed = true, status = "Shipping Ready", deliveryStatus = "")
                 repository.updateOrder(updated)
                 try {
@@ -1439,15 +1689,21 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                emitUserMessage("Unable to accept order. Please try again.")
             }
         }
     }
 
     fun requestRejectOrderBySeller(orderId: String) {
         viewModelScope.launch {
-            val orderList = allOrders.value
-            val found = orderList.find { it.orderId == orderId }
-            if (found != null) {
+            try {
+                val orderList = allOrders.value
+                val found = orderList.find { it.orderId == orderId } ?: run {
+                    emitUserMessage("Order not found. Please refresh and try again.")
+                    return@launch
+                }
                 val updated = found.copy(sellerRejectRequested = true, status = "Seller Reject Requested")
                 repository.updateOrder(updated)
                 try {
@@ -1457,6 +1713,9 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                emitUserMessage("Unable to reject order. Please try again.")
             }
         }
     }
