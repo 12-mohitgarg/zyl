@@ -4501,15 +4501,18 @@ fun OrdersScreen(viewModel: BazaarViewModel) {
     var returnTarget by remember { mutableStateOf<Pair<Order, Product>?>(null) }
     var returnReason by remember { mutableStateOf("") }
     var returnPhotoUrl by remember { mutableStateOf("") }
+    var isUploadingReturnPhoto by remember { mutableStateOf(false) }
     val returnPhotoLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         val target = returnTarget
         if (uri != null && target != null) {
+            isUploadingReturnPhoto = true
             viewModel.uploadImageToFirebaseStorage(
                 uri,
                 "returns/${target.first.orderId}_${target.second.id}_${System.currentTimeMillis()}.jpg"
             ) { url ->
+                isUploadingReturnPhoto = false
                 returnPhotoUrl = url
                 Toast.makeText(context, "Return photo attached.", Toast.LENGTH_SHORT).show()
             }
@@ -4789,6 +4792,7 @@ fun OrdersScreen(viewModel: BazaarViewModel) {
                                                     }
                                                     returnReason = ""
                                                     returnPhotoUrl = ""
+                                                    isUploadingReturnPhoto = false
                                                 },
                                                 shape = RoundedCornerShape(8.dp),
                                                 border = BorderStroke(1.dp, DarkGreenPrimary),
@@ -5019,13 +5023,45 @@ fun OrdersScreen(viewModel: BazaarViewModel) {
                     )
                     OutlinedButton(
                         onClick = { returnPhotoLauncher.launch("image/*") },
+                        enabled = !isUploadingReturnPhoto,
                         modifier = Modifier.fillMaxWidth(),
                         border = BorderStroke(1.dp, DarkGreenPrimary),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = DarkGreenPrimary)
                     ) {
-                        Icon(Icons.Default.AddAPhoto, contentDescription = "", modifier = Modifier.size(16.dp))
+                        if (isUploadingReturnPhoto) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = DarkGreenPrimary
+                            )
+                        } else {
+                            Icon(Icons.Default.AddAPhoto, contentDescription = "", modifier = Modifier.size(16.dp))
+                        }
                         Spacer(Modifier.width(6.dp))
-                        Text(if (returnPhotoUrl.isBlank()) "Attach Product Photo" else "Change Product Photo")
+                        Text(
+                            when {
+                                isUploadingReturnPhoto -> "Uploading photo..."
+                                returnPhotoUrl.isBlank() -> "Attach Product Photo"
+                                else -> "Change Product Photo"
+                            }
+                        )
+                    }
+                    if (isUploadingReturnPhoto) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(LightGreenSecondary.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
+                                .padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                                color = DarkGreenPrimary
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text("Photo upload ho raha hai, please wait...", fontSize = 11.sp, color = DarkGreenPrimary, fontWeight = FontWeight.Bold)
+                        }
                     }
                     if (returnPhotoUrl.isNotBlank()) {
                         AsyncImage(
@@ -5040,7 +5076,9 @@ fun OrdersScreen(viewModel: BazaarViewModel) {
             confirmButton = {
                 Button(
                     onClick = {
-                        if (returnReason.isBlank() || returnPhotoUrl.isBlank()) {
+                        if (isUploadingReturnPhoto) {
+                            Toast.makeText(context, "Photo upload complete hone ka wait karein.", Toast.LENGTH_SHORT).show()
+                        } else if (returnReason.isBlank() || returnPhotoUrl.isBlank()) {
                             Toast.makeText(context, "Please add a reason and product photo.", Toast.LENGTH_SHORT).show()
                         } else {
                             viewModel.submitReturnRequest(order.orderId, product, returnReason, returnPhotoUrl)
@@ -5048,6 +5086,7 @@ fun OrdersScreen(viewModel: BazaarViewModel) {
                             returnTarget = null
                         }
                     },
+                    enabled = !isUploadingReturnPhoto,
                     colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary)
                 ) { Text("Submit", color = CustomWhite) }
             },
@@ -7365,6 +7404,7 @@ fun SellerPanelScreen(
     var newProdDesc by remember { mutableStateOf("") }
     var newProdStock by remember { mutableStateOf("") }
     var imageList by remember { mutableStateOf(listOf<String>()) }
+    var isUploadingProductPhoto by remember { mutableStateOf(false) }
     var editingProduct by remember { mutableStateOf<Product?>(null) }
     var deletingProduct by remember { mutableStateOf<Product?>(null) }
     var showProductImageSelectorDialog by remember { mutableStateOf(false) }
@@ -7382,6 +7422,7 @@ fun SellerPanelScreen(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         if (uri != null) {
+            isUploadingProductPhoto = true
             runCatching {
                 context.contentResolver.takePersistableUriPermission(
                     uri,
@@ -7395,6 +7436,7 @@ fun SellerPanelScreen(
                 imageId,
                 onError = { message -> Toast.makeText(context, message, Toast.LENGTH_LONG).show() }
             ) { url ->
+                isUploadingProductPhoto = false
                 imageList = imageList + url
                 showProductImageSelectorDialog = false
                 if (url.startsWith("http://", true) || url.startsWith("https://", true)) {
@@ -7403,6 +7445,8 @@ fun SellerPanelScreen(
                     Toast.makeText(context, "Saved locally. Cloud upload failed. Other users won't see this image.", Toast.LENGTH_LONG).show()
                 }
             }
+        } else {
+            isUploadingProductPhoto = false
         }
     }
 
@@ -8941,7 +8985,7 @@ fun SellerPanelScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(100.dp)
-                                .clickable { productPhotoLauncher.launch(arrayOf("image/*")) },
+                                .clickable(enabled = !isUploadingProductPhoto) { productPhotoLauncher.launch(arrayOf("image/*")) },
                             colors = CardDefaults.cardColors(containerColor = SoftGrey.copy(alpha = 0.3f)),
                             border = BorderStroke(1.dp, SoftGrey),
                             shape = RoundedCornerShape(10.dp)
@@ -8951,10 +8995,27 @@ fun SellerPanelScreen(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.Center
                             ) {
-                                Icon(Icons.Default.CloudUpload, contentDescription = "", tint = MutedText, modifier = Modifier.size(34.dp))
+                                if (isUploadingProductPhoto) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(34.dp),
+                                        strokeWidth = 3.dp,
+                                        color = DarkGreenPrimary
+                                    )
+                                } else {
+                                    Icon(Icons.Default.CloudUpload, contentDescription = "", tint = MutedText, modifier = Modifier.size(34.dp))
+                                }
                                 Spacer(modifier = Modifier.height(4.dp))
-                                Text("No Images Uploaded Yet", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = RichBlack)
-                                Text("Tap to select actual photos from your gallery", fontSize = 10.sp, color = MutedText)
+                                Text(
+                                    if (isUploadingProductPhoto) "Uploading product photo..." else "No Images Uploaded Yet",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isUploadingProductPhoto) DarkGreenPrimary else RichBlack
+                                )
+                                Text(
+                                    if (isUploadingProductPhoto) "Please wait, preview will appear shortly" else "Tap to select actual photos from your gallery",
+                                    fontSize = 10.sp,
+                                    color = MutedText
+                                )
                             }
                         }
                     } else {
@@ -8990,6 +9051,25 @@ fun SellerPanelScreen(
                                     }
                                 }
                             }
+                            if (isUploadingProductPhoto) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(70.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(LightGreenSecondary.copy(alpha = 0.45f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(24.dp),
+                                            strokeWidth = 2.dp,
+                                            color = DarkGreenPrimary
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text("Uploading", fontSize = 9.sp, color = DarkGreenPrimary, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -8997,14 +9077,23 @@ fun SellerPanelScreen(
                         onClick = {
                             productPhotoLauncher.launch(arrayOf("image/*"))
                         },
+                        enabled = !isUploadingProductPhoto,
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = DarkGreenPrimary),
                         border = BorderStroke(1.dp, DarkGreenPrimary),
                         modifier = Modifier.align(Alignment.Start),
                         shape = RoundedCornerShape(8.dp)
                     ) {
-                        Icon(Icons.Default.AddAPhoto, contentDescription = "", modifier = Modifier.size(16.dp))
+                        if (isUploadingProductPhoto) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = DarkGreenPrimary
+                            )
+                        } else {
+                            Icon(Icons.Default.AddAPhoto, contentDescription = "", modifier = Modifier.size(16.dp))
+                        }
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Upload Photo", fontSize = 11.sp)
+                        Text(if (isUploadingProductPhoto) "Uploading..." else "Upload Photo", fontSize = 11.sp)
                     }
 
                     Spacer(modifier = Modifier.height(10.dp))
@@ -9016,7 +9105,9 @@ fun SellerPanelScreen(
                             val stock = newProdStock.toIntOrNull()
                             val extraImagesStr = imageList.joinToString(",")
 
-                            if (newProdName.isNotBlank() && price != null && origPrice != null && stock != null && stock >= 0 && newProdCat.isNotBlank() && imageList.isNotEmpty()) {
+                            if (isUploadingProductPhoto) {
+                                Toast.makeText(context, "Image upload complete hone ka wait karein.", Toast.LENGTH_SHORT).show()
+                            } else if (newProdName.isNotBlank() && price != null && origPrice != null && stock != null && stock >= 0 && newProdCat.isNotBlank() && imageList.isNotEmpty()) {
                                 val existing = editingProduct
                                 if (existing == null) {
                                     viewModel.addProduct(newProdName, price, origPrice, newProdCat, newProdDesc, currentUser?.email ?: "", extraImagesStr, stock)
@@ -9038,6 +9129,7 @@ fun SellerPanelScreen(
                                 newProdDesc = ""
                                 newProdStock = ""
                                 imageList = emptyList()
+                                isUploadingProductPhoto = false
                                 Toast.makeText(context, "Product saved successfully.", Toast.LENGTH_SHORT).show()
                             } else if (imageList.isEmpty()) {
                                 Toast.makeText(context, "Please upload at least one product photo.", Toast.LENGTH_SHORT).show()
@@ -9045,6 +9137,7 @@ fun SellerPanelScreen(
                                 Toast.makeText(context, "Please enter valid prices and mandatory stock quantity.", Toast.LENGTH_SHORT).show()
                             }
                         },
+                        enabled = !isUploadingProductPhoto,
                         colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary),
                         modifier = Modifier.fillMaxWidth().height(48.dp),
                         shape = RoundedCornerShape(10.dp)
