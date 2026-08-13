@@ -7,32 +7,51 @@ plugins {
   alias(libs.plugins.google.services)
 }
 
+// Android Studio can sometimes try to run ":app:wrapper" from the selected app
+// module. The real Gradle wrapper task lives at the root project, but this
+// compatibility task keeps sync/IDE actions from failing on that wrong task path.
+tasks.register("wrapper") {
+  group = "help"
+  description = "Compatibility task. Use the root project ':wrapper' task to regenerate Gradle wrapper files."
+  doLast {
+    println("Gradle wrapper is configured at the root project. Use './gradlew wrapper' from the project root.")
+  }
+}
+
+// Android Studio/IntelliJ may request this Kotlin DSL model task during sync.
+// Newer Gradle/Kotlin plugin combinations do not always expose it for Android
+// modules, so keep a no-op task available for IDE compatibility.
+tasks.register("prepareKotlinBuildScriptModel") {
+  group = "help"
+  description = "Compatibility task for Android Studio Kotlin DSL sync."
+}
+
 android {
-  namespace = "com.example"
+  namespace = "com.aistudio.zylvorbazaar.gktpwy"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
     applicationId = "com.aistudio.zylvorbazaar.gktpwy"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    versionCode = 4
+    versionName = "1.3"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
   signingConfigs {
     create("release") {
-      val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
+      val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${projectDir}/zylvorbazaar.jks"
       storeFile = file(keystorePath)
-      storePassword = System.getenv("STORE_PASSWORD")
-      keyAlias = "upload"
-      keyPassword = System.getenv("KEY_PASSWORD")
+      storePassword = System.getenv("KEYSTORE_PASSWORD") ?: "123456"
+      keyAlias = System.getenv("KEYSTORE_ALIAS") ?: "release"
+      keyPassword = System.getenv("KEYSTORE_KEY_PASSWORD") ?: "123456"
     }
     create("debugConfig") {
       storeFile = file("${rootDir}/debug.keystore")
       storePassword = "android"
-      keyAlias = "androiddebugkey"
+      keyAlias = "release"
       keyPassword = "android"
     }
   }

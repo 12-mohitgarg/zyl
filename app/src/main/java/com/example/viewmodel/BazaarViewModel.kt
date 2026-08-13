@@ -4,7 +4,7 @@ import android.app.Application
 import android.webkit.MimeTypeMap
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.BuildConfig
+import com.aistudio.zylvorbazaar.gktpwy.BuildConfig
 import com.example.data.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*

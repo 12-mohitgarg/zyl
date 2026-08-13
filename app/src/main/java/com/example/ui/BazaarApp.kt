@@ -2,15 +2,15 @@ package com.example.ui
 
 import android.app.Activity
 import android.content.Intent
-import android.widget.Toast
 import android.net.Uri
+import android.widget.Toast
 import java.util.UUID
-import androidx.activity.compose.BackHandler
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.random.Random
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
@@ -62,9 +62,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
-import com.example.BuildConfig
+import com.aistudio.zylvorbazaar.gktpwy.BuildConfig
 import com.example.MainActivity
-import com.example.R
+import com.aistudio.zylvorbazaar.gktpwy.R
 import com.example.RazorpayResult
 import com.example.data.CartItem
 import com.example.data.Order
@@ -5504,6 +5504,23 @@ fun ProfileScreen(
                 title = "Help Center",
                 description = "WhatsApp $HELP_DISPLAY_MOBILE or email $HELP_EMAIL",
                 onClick = { showHelpCenter = true }
+            )
+        }
+
+        // Row: Delete Account button
+        item {
+            ProfileInteractiveRow(
+                icon = Icons.Default.DeleteForever,
+                title = "Delete Account >",
+                description = "Request account & data deletion",
+                onClick = {
+                    try {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://ecomersadmin.netlify.app/user-delete"))
+                        context.startActivity(intent)
+                    } catch (e: Exception) {
+                        Toast.makeText(context, "Could not open link", Toast.LENGTH_SHORT).show()
+                    }
+                }
             )
         }
 
