@@ -7,6 +7,25 @@
   "client": [
     {
       "client_info": {
+        "mobilesdk_app_id": "1:264981865474:android:33e70f332eb74d19a5331b",
+        "android_client_info": {
+          "package_name": "com.aistudio.zylvorbazaar"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBEKTyo-jdxjloYHg7W_3oASx_UWPC54Yo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
         "mobilesdk_app_id": "1:264981865474:android:ab550ba8934282a0a5331b",
         "android_client_info": {
           "package_name": "com.aistudio.zylvorbazaar.gktpwy"

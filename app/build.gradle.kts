@@ -27,15 +27,15 @@ tasks.register("prepareKotlinBuildScriptModel") {
 }
 
 android {
-  namespace = "com.aistudio.zylvorbazaar.gktpwy"
+  namespace = "com.aistudio.zylvorbazaar"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "com.aistudio.zylvorbazaar.gktpwy"
+    applicationId = "com.aistudio.zylvorbazaar"
     minSdk = 24
     targetSdk = 36
-    versionCode = 4
-    versionName = "1.3"
+    versionCode = 1
+    versionName = "1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
